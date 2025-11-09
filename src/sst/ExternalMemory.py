@@ -43,4 +43,6 @@ class ExternalMemory(AbstractMemory):
         [AddrRange(0x80000000, MaxAddr)], "Physical address ranges."
     )
     node_index = Param.Int(0, "index of this remote memory node")
+    is_shared = Param.Bool(False, "Set this to true when simulation CXL 3.0"
+                            "shared memory")
     use_sst_sim = Param.Bool(True, "Use SST as an external memory simulator.")

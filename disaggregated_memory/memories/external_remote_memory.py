@@ -81,6 +81,7 @@ class ExternalRemoteMemory(AbstractMemorySystem):
         self,
         size: "str" = None,
         addr_range: AddrRange = None,
+        host_id: int = None,
         use_sst_sim: bool = True,
     ):
         """This class has to be initialized using either size or memory ranges.
@@ -103,6 +104,13 @@ class ExternalRemoteMemory(AbstractMemorySystem):
         # The ExternalMemory is an AbstractMemory object that connects
         # gem5 to SST as an external memory.
         self.outgoing_request_bridge = ExternalMemory()
+        
+        # To avoid rewrites into the shared memory region and enable CXL-like
+        # host IDs, the user needs to supply a node_index
+        if host_id is None:
+            self.outgoing_request_bridge.node_index = 0
+        else:
+            self.outgoing_request_bridge.node_index = host_id
 
         # Indicate whether the user is using SST or not.
         self.outgoing_request_bridge.use_sst_sim = use_sst_sim

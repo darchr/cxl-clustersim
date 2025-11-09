@@ -48,6 +48,7 @@ ExternalMemory::ExternalMemory(
     physicalAddressRanges(params.physical_address_ranges.begin(),
                           params.physical_address_ranges.end()),
     nodeIndex(params.node_index),
+    isShared(params.is_shared),
     useSSTSim(params.use_sst_sim)
 {
     this->init_phase_bool = false;

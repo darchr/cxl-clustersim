@@ -188,6 +188,10 @@ class ExternalMemory : public memory::AbstractMemory
     // multi-node simulation scenario.
     unsigned int nodeIndex;
 
+    // If sharing is enabled, the external memory needs to know to avoid
+    // rewriting the remote memory
+    bool isShared;
+
     // A variable is needed to tell gem5 whether to use SST or not.
     bool useSSTSim;
 };

@@ -32,10 +32,12 @@ from typing import (
     List,
     Sequence,
     Tuple,
+    Optional
 )
 
 import m5
 from m5.objects import (
+    Root,
     Addr,
     AddrRange,
     BadAddr,
@@ -164,8 +166,59 @@ class X86ComposableMemoryBoard(X86Board):
                 self.get_remote_memory()._remote_request_bridge.use_sst_sim
             )
 
+    # @overrides(AbstractBoard)
+    # def _pre_i
     @overrides(AbstractBoard)
-    def _pre_i
+    def _pre_instantiate(self, full_system: Optional[bool] = None) -> None:
+        """To be called immediately before ``m5.instantiate``. This is where
+        ``_connect_things`` is executed by default and the root object is Root
+        object is created and returned.
+
+        :param full_system: Used to pass the full system flag to the board from
+                            the Simulator module. **Note**: This was
+                            implemented solely to maintain backawards
+                            compatibility with while the Simululator module's
+                            `full_system` flag is in state of deprecation. This
+                            parameter will be removed when it is. When this
+                            occurs whether a simulation is to be run in FS or
+                            SE mode will be determined by the board set."""
+
+        # Is is bad design IMO. In this version of code-refactoring, Root is
+        # initialized in this method. Hiding Root behind the standard library
+        # completely breaks compatibility of the standard library and the old
+        # scripts (like using SST, where m5.initiantiate needs to be in the
+        # client side script to load checkpoints of gem5).
+
+        # 1. Connect the memory, processor, and cache hierarchy.
+        self._connect_things()
+
+
+        # """To be called immediately before ``m5.instantiate``. This is where
+        # ``_connect_things`` is executed by default and the root object is Root
+        # object is created and returned.
+
+        # :param full_system: Used to pass the full system flag to the board from
+        #                     the Simulator module. **Note**: This was
+        #                     implemented solely to maintain backawards
+        #                     compatibility with while the Simululator module's
+        #                     `full_system` flag is in state of deprecation. This
+        #                     parameter will be removed when it is. When this
+        #                     occurs whether a simulation is to be run in FS or
+        #                     SE mode will be determined by the board set."""
+
+        # 1. Connect the memory, processor, and cache hierarchy.
+        # self._connect_things()
+
+        # 2. Create the root object)
+
+        # 3. Call any of the components' `_pre_instantiate` functions.
+        # self.get_processor()._pre_instantiate(root)
+        # self.get_memory()._pre_instantiate(root)
+        # if self.get_cache_hierarchy():
+        #     self.get_cache_hierarchy()._pre_instantiate(root)
+
+        # 4. Return the root object.
+        # return root
 
     def _backward_pre_instantiate(self, root: Root) -> Root:
         """Looks like the latest version of the standard library code

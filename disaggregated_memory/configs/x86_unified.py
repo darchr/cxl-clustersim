@@ -361,7 +361,7 @@ cache_hierarchy = cache_type
 
 local_memory = local_mem
 remote_memory = ExternalRemoteMemory(
-    addr_range=remote_memory_range, use_sst_sim=use_sst
+    addr_range=remote_memory_range, use_sst_sim=use_sst, host_id=args.instance
 )
 
 board = None
@@ -434,6 +434,7 @@ if use_sst == False:
 
     # probably this script is being called only in gem5. Since we are not using
     # the simulator module, we might have to add more m5.simulate()
+    m5.simulate()
     m5.simulate()
     m5.simulate()
     if ckpt_to_read_write != "":
