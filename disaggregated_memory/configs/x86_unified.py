@@ -43,7 +43,10 @@ sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir))
 )
 
-from boards.x86_shared_board import X86SharedMemoryBoard
+from boards.x86_shared_board import (
+   X86SharedMemoryBoard,
+   X86AlternateSharedMemoryBoard
+)
 from boards.x86_main_board import X86ComposableMemoryBoard
 
 from cachehierarchies.dm_caches import ClassicPrivateL1PrivateL2SharedL3DMCache
@@ -58,6 +61,7 @@ from m5.objects import (
 
 from gem5.components.memory import (
     DualChannelDDR4_2400,
+    SingleChannelDDR4_2400,
     DualChannelDDR3_1600,
 )
 
@@ -322,7 +326,7 @@ cache_type = {  "l1l2l3": ClassicPrivateL1PrivateL2SharedL3DMCache(
 
 local_mem = {"ddr3": DualChannelDDR3_1600(size=args.local_memory_size),
              "": DualChannelDDR4_2400(size=args.local_memory_size),
-             "ddr4": DualChannelDDR4_2400(size=args.local_memory_size),
+             "ddr4": SingleChannelDDR4_2400(size=args.local_memory_size),
              "hbm": None,
              "ddr5": None}[args.local_memory_type]
 
@@ -376,7 +380,7 @@ if shared_memory == False:
     )
 else:
     # inherits from the ComposableMemory board
-    board = X86SharedMemoryBoard(
+    board = X86AlternateSharedMemoryBoard(
         clk_freq=core_freq,
         processor=processor,
         cache_hierarchy=cache_hierarchy,
@@ -448,3 +452,4 @@ else:
     if use_sst == False:
         m5.simulate()
     # otherwise just let SST do the simulation.
+

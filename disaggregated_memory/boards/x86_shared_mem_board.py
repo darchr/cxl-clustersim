@@ -1,3 +1,4 @@
+
 # Copyright (c) 2023-24 The Regents of the University of California
 # All rights reserved.
 #
@@ -26,25 +27,11 @@
 
 # Creating an x86 board that can simulate more than 3 GB memory.
 
-import os
-import sys
-from abc import ABCMeta
-from typing import (
-    List,
-    Sequence,
-    Tuple,
-)
-
-# all the source files are one directory above.
-sys.path.append(
-    os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir))
-)
-
-# from memories.external_remote_memory import ExternalRemoteMemory
-from boards.x86_main_board import X86ComposableMemoryBoard
+from typing import List
 
 import m5
 from m5.objects import (
+    FlatTables,
     Addr,
     AddrRange,
     BadAddr,
@@ -53,6 +40,7 @@ from m5.objects import (
     CowDiskImage,
     IdeDisk,
     IOXBar,
+    NoncoherentXBar,
     OutgoingRequestBridge,
     Pc,
     Port,
@@ -72,256 +60,39 @@ from m5.objects import (
     X86IntelMPIOAPIC,
     X86IntelMPIOIntAssignment,
     X86IntelMPProcessor,
-    X86SMBiosBiosInformation
+    X86SMBiosBiosInformation,
 )
+from m5.util.convert import toMemorySize
 
 from gem5.components.boards.abstract_board import AbstractBoard
 from gem5.components.boards.x86_board import X86Board
 from gem5.components.cachehierarchies.abstract_cache_hierarchy import (
     AbstractCacheHierarchy,
 )
+
+
 from gem5.components.memory.abstract_memory_system import AbstractMemorySystem
+from gem5.components.memory.simple import SingleChannelSimpleMemory
+from gem5.components.memory import SingleChannelDDR4_2400
 from gem5.components.processors.abstract_processor import AbstractProcessor
 from gem5.utils.override import overrides
-from gem5.components.memory import SingleChannelDDR4_2400
 
-class X86SharedMemoryBoard(X86ComposableMemoryBoard):
-    """
-    A high-level X86 board that allows users to simulate reserved memory
-    ranges to enable memory sharing.
-    """
-    def __init__(
-        self,
-        clk_freq: str,
-        processor: AbstractProcessor,
-        local_memory: AbstractMemorySystem,
-        remote_memory: AbstractMemorySystem,
-        cache_hierarchy: AbstractCacheHierarchy,
-        remote_memory_access_cycles: int = 0,
-        remote_memory_address_range: AddrRange = None,
-        starting_memory_limit: str = None,
-        
-    ) -> None:
-        # call the composable memory board that start the simulation.
-        super().__init__(
-            clk_freq=clk_freq,
-            processor=processor,
-            local_memory=local_memory,
-            remote_memory=remote_memory,
-            cache_hierarchy=cache_hierarchy,
-            remote_memory_access_cycles=remote_memory_access_cycles,
-            remote_memory_address_range=remote_memory_address_range,
-            starting_memory_limit=starting_memory_limit
-        )
-
-    @overrides(X86ComposableMemoryBoard)
-    def _setup_io_devices(self):
-        """Sets up the x86 IO devices.
-
-        Note: This is mostly copy-paste from prior X86 FS setups. Some of it
-        may not be documented and there may be bugs.
-        """
-
-        # Constants similar to x86_traits.hh
-        IO_address_space_base = 0x8000000000000000
-        pci_config_address_space_base = 0xC000000000000000
-        interrupts_address_space_base = 0xA000000000000000
-        APIC_range_size = 1 << 12
-
-        # Setup memory system specific settings.
-        if self.get_cache_hierarchy().is_ruby():
-            self.pc.attachIO(self.get_io_bus(), [self.pc.south_bridge.ide.dma])
-        else:
-            self.bridge = Bridge(delay="50ns")
-            self.bridge.mem_side_port = self.get_io_bus().cpu_side_ports
-            try:
-                self.bridge.cpu_side_port = (
-                    self.get_cache_hierarchy().get_mem_side_port()
-                )
-            except:
-                print("port not connected!")
-
-            # # Constants similar to x86_traits.hh
-            IO_address_space_base = 0x8000000000000000
-            pci_config_address_space_base = 0xC000000000000000
-            interrupts_address_space_base = 0xA000000000000000
-            APIC_range_size = 1 << 12
-
-            self.bridge.ranges = [
-                AddrRange(0xC0000000, 0xFFFF0000),
-                AddrRange(
-                    IO_address_space_base, interrupts_address_space_base - 1
-                ),
-                AddrRange(pci_config_address_space_base, Addr.max),
-            ]
-
-            self.apicbridge = Bridge(delay="50ns")
-            self.apicbridge.cpu_side_port = self.get_io_bus().mem_side_ports
-            try:
-                self.apicbridge.mem_side_port = (
-                    self.get_cache_hierarchy().get_cpu_side_port()
-                )
-            except:
-                print("port not connected")
-            self.apicbridge.ranges = [
-                AddrRange(
-                    interrupts_address_space_base,
-                    interrupts_address_space_base
-                    + self.get_processor().get_num_cores() * APIC_range_size
-                    - 1,
-                )
-            ]
-            self.pc.attachIO(self.get_io_bus())
-
-        # Add in a Bios information structure.
-        self.workload.smbios_table.structures = [X86SMBiosBiosInformation()]
-
-        # Set up the Intel MP table
-        base_entries = []
-        ext_entries = []
-        madt_entries = []
-        for i in range(self.get_processor().get_num_cores()):
-            bp = X86IntelMPProcessor(
-                local_apic_id=i,
-                local_apic_version=0x14,
-                enable=True,
-                bootstrap=(i == 0),
-            )
-            base_entries.append(bp)
-
-        io_apic = X86IntelMPIOAPIC(
-            id=self.get_processor().get_num_cores(),
-            version=0x11,
-            enable=True,
-            address=0xFEC00000,
-        )
-
-        self.pc.south_bridge.io_apic.apic_id = io_apic.id
-        base_entries.append(io_apic)
-        pci_bus = X86IntelMPBus(bus_id=0, bus_type="PCI   ")
-        base_entries.append(pci_bus)
-        isa_bus = X86IntelMPBus(bus_id=1, bus_type="ISA   ")
-        base_entries.append(isa_bus)
-        connect_busses = X86IntelMPBusHierarchy(
-            bus_id=1, subtractive_decode=True, parent_bus=0
-        )
-        ext_entries.append(connect_busses)
-
-        pci_dev4_inta = X86IntelMPIOIntAssignment(
-            interrupt_type="INT",
-            polarity="ConformPolarity",
-            trigger="ConformTrigger",
-            source_bus_id=0,
-            source_bus_irq=0 + (4 << 2),
-            dest_io_apic_id=io_apic.id,
-            dest_io_apic_intin=16,
-        )
-
-        base_entries.append(pci_dev4_inta)
-        pci_dev4_inta_madt = X86ACPIMadtIntSourceOverride(
-            bus_source=pci_dev4_inta.source_bus_id,
-            irq_source=pci_dev4_inta.source_bus_irq,
-            sys_int=pci_dev4_inta.dest_io_apic_intin,
-            flags=0,
-        )
-        madt_entries.append(pci_dev4_inta_madt)
-
-        def assignISAInt(irq, apicPin):
-            assign_8259_to_apic = X86IntelMPIOIntAssignment(
-                interrupt_type="ExtInt",
-                polarity="ConformPolarity",
-                trigger="ConformTrigger",
-                source_bus_id=1,
-                source_bus_irq=irq,
-                dest_io_apic_id=io_apic.id,
-                dest_io_apic_intin=0,
-            )
-            base_entries.append(assign_8259_to_apic)
-
-            assign_to_apic = X86IntelMPIOIntAssignment(
-                interrupt_type="INT",
-                polarity="ConformPolarity",
-                trigger="ConformTrigger",
-                source_bus_id=1,
-                source_bus_irq=irq,
-                dest_io_apic_id=io_apic.id,
-                dest_io_apic_intin=apicPin,
-            )
-            base_entries.append(assign_to_apic)
-            # acpi
-            assign_to_apic_acpi = X86ACPIMadtIntSourceOverride(
-                bus_source=1, irq_source=irq, sys_int=apicPin, flags=0
-            )
-            madt_entries.append(assign_to_apic_acpi)
-
-        assignISAInt(0, 2)
-        assignISAInt(1, 1)
-
-        for i in range(3, 15):
-            assignISAInt(i, i)
-
-        self.workload.intel_mp_table.base_entries = base_entries
-        self.workload.intel_mp_table.ext_entries = ext_entries
-
-        madt = X86ACPIMadt(
-            local_apic_address=0, records=madt_entries, oem_id="madt"
-        )
-        self.workload.acpi_description_table_pointer.rsdt.entries.append(madt)
-        self.workload.acpi_description_table_pointer.xsdt.entries.append(madt)
-        self.workload.acpi_description_table_pointer.oem_id = "gem5"
-        self.workload.acpi_description_table_pointer.rsdt.oem_id = "gem5"
-        self.workload.acpi_description_table_pointer.xsdt.oem_id = "gem5"
-        entries = [
-            # Mark the first megabyte of memory as reserved
-            X86E820Entry(addr=0, size="639kB", range_type=1),
-            X86E820Entry(addr=0x9FC00, size="385kB", range_type=2),
-            # Mark the rest of physical memory as available
-            # the local address comes first.
-            X86E820Entry(
-                addr=0x100000,
-                size=f"{self.mem_ranges[0].size() - 0x100000:d}B",
-                range_type=1,
-            ),
-            # The second range of memory will be shared and the type of this
-            # range has to be 12 - `persistent`
-            X86E820Entry(
-                addr=0x100000000,
-                size=f"{self.mem_ranges[1].size()}B",
-                range_type=12,
-            ),
-        ]
-
-        # Reserve the last 16kB of the 32-bit address space for m5ops
-        entries.append(
-            X86E820Entry(addr=0xFFFF0000, size="64kB", range_type=2)
-        )
-        self.workload.e820_table.entries = entries        
+# For ExtenalMemory
+from boards.x86_main_board import X86ComposableMemoryBoard
+from boards.x86_shared_board import X86SharedMemoryBoard
 
 
-    @overrides(X86ComposableMemoryBoard)
-    def get_default_kernel_args(self) -> List[str]:
-        return [
-            "no_systemd=true",
-            "earlyprintk=ttyS0",
-            "console=ttyS0",
-            "lpj=7999923",
-            "root=/dev/sda2",
-            # "mtrr=debug"
-            "no_systemd=true",
-            # "init=/bin/bash"
-        ]
-
-class X86AlternateSharedMemoryBoard(X86SharedMemoryBoard):
+class X86SpaceControlOGBoard(X86SharedMemoryBoard):
     """
     This class extends the existing X86Board with dax device support and
     space-control like permission checks. We'll replace this with the remote
     memory board later.
 
     This board also allows the user to map > 3 GiB memory in the local memory
-    space. There is a 256MiB Kernel memory allocated at 0x0 but is kernel
+    space. There is a 64MiB Kernel memory allocated at 0x0 but is kernel
     reserved.
-    The main memory range starts at 4G and goes to the main memory range.
-    The remote memory starts where the user specifies.
+    The main memory range starts at 4G and goes to 20G.
+    The remote memory starts at 20G and goes to 36G.
     """
 
     def __init__(
@@ -333,7 +104,8 @@ class X86AlternateSharedMemoryBoard(X86SharedMemoryBoard):
         remote_memory: AbstractMemorySystem,
         remote_memory_access_cycles: int = 0,
         remote_memory_address_range: AddrRange = None,
-        starting_memory_limit: str = None
+        starting_memory_limit: str = None,
+        permission_table_range: AddrRange = None,
     ):
         """
         The board accepts the standard inputs of any given board with the
@@ -350,6 +122,9 @@ class X86AlternateSharedMemoryBoard(X86SharedMemoryBoard):
             remote_memory_address_range=remote_memory_address_range,
             starting_memory_limit=starting_memory_limit
         )
+        # You need dm caches to connect the ports together
+        # self.remote_memory = remote_memory
+        # self.remoteMemory = remote_memory
         # The kernel uses memory at 0x0 so we need a tiny range of memory for
         # the kernel to function properly
         self.kernelMemory = SingleChannelDDR4_2400(size="256MiB")
@@ -540,6 +315,12 @@ class X86AlternateSharedMemoryBoard(X86SharedMemoryBoard):
                 size=f"{self.remote_memory.get_size()}B",
                 range_type=12,
             ),
+
+            # X86E820Entry(
+            #     addr=0x100000000 + self.memory.get_size(),
+            #     size=f"{0x100000000 + self.memory.get_size() + self.remote_memory.get_size()}B",
+            #     range_type=12,
+            # ),
         ]
 
         # Reserve the last 16KiB of the 32-bit address space for m5ops
@@ -553,13 +334,19 @@ class X86AlternateSharedMemoryBoard(X86SharedMemoryBoard):
     def _setup_memory_ranges(self):
         memory = self.get_local_memory()
 
+
+
+        # excess_mem_size = \
+        #      memory.get_size() - toMemorySize(
+        #     "3GiB")
+
         self.mem_ranges = [
             # range at 0x0 for the kernel stuff
             AddrRange(0x0, size=self.kernelMemory.get_size()),
             AddrRange(0xC0000000, size=0x100000),  # For I/0
             AddrRange(0x100000000, size=self.memory.get_size()),
-            AddrRange(int(self._remoteMemoryAddressRange.start),
-                                            size=self.remote_memory.get_size())
+            AddrRange(int(self._remoteMemoryAddressRange.start), size=self.remote_memory.get_size())
+            # AddrRange(0x100000000 + self.memory.get_size(), size=self.remote_memory.get_size())
         ]
 
         memory.set_memory_range([self.mem_ranges[2]])
@@ -602,8 +389,7 @@ class X86AlternateSharedMemoryBoard(X86SharedMemoryBoard):
             self.get_cache_hierarchy().incorporate_cache(self)
             
         self.kernelMemory.incorporate_memory(self)
-        self.kernelMemory.get_memory_controllers()[0].port = \
-                                self.get_cache_hierarchy().get_mem_side_port()
+        self.kernelMemory.get_memory_controllers()[0].port = self.get_cache_hierarchy().get_mem_side_port()
 
         # Create and connect Xbar for additional latency. This will override
         # the cache's incorporate_cache
@@ -616,12 +402,13 @@ class X86AlternateSharedMemoryBoard(X86SharedMemoryBoard):
             # connect the system to the remote memory directly.
             for cntr in self.get_remote_memory().get_memory_controllers():
                 cntr.port = self.get_cache_hierarchy().get_mem_side_port()
-            # for cntr in self.get_local_memory().get_memory_controllers():
-            #     cntr.port = self.get_cache_hierarchy().get_mem_side_port()
+            for cntr in self.get_local_memory().get_memory_controllers():
+                cntr.port = self.get_cache_hierarchy().get_mem_side_port()
         # Incorporate the processor into the motherboard.
         self.get_processor().incorporate_processor(self)
 
         self._connect_things_called = True
+
 
     @overrides(X86ComposableMemoryBoard)
     def get_default_kernel_args(self) -> List[str]:

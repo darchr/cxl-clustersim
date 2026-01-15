@@ -874,6 +874,7 @@ try:
             # there is a time but not in seconds! fatally kill the program
             fatal("Runtime must be in unit seconds (ns, us, ms, s)!")
 except KeyError:
+    print("There is no max time set!")
     # There is no max-time. It's okay, we can live with it.
     until_when = "0s"
 
