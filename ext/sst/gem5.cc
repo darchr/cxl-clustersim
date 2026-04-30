@@ -1,4 +1,4 @@
-// Copyright (c) 2021-2023 The Regents of the University of California
+// Copyright (c) 2021-2026 The Regents of the University of California
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -87,6 +87,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <cstdint>
 
 #include <pybind11/embed.h>
 #include <pybind11/pybind11.h>
@@ -192,6 +193,16 @@ gem5Component::gem5Component(SST::ComponentId_t id, SST::Params& params):
         sstPorts[i]->setOutputStream(&(output));
     }
     flag = false;
+    // We also need another parameter to end the simulation if max ticks is
+    // reached. SST's --stop-at fails to stop the simulation if that tick is
+    // skipped by gem5. 
+    str_max_ticks = params.find<std::string>("max_ticks", "");
+
+    if (str_max_ticks != "") {
+        // convert this to uint64_t as gem5 can go upto max(uint64_t)
+        std::istringstream iss(str_max_ticks);
+        iss >> gem5_max_ticks;
+    }
 }
 
 gem5Component::~gem5Component()
@@ -312,6 +323,25 @@ gem5Component::clockTick(SST::Cycle_t currentCycle)
             "m5.stats.dump()",
         };
         execPythonCommands(output_stats_commands);
+
+        // end the simulation if max ticks is given and current cycle reached
+        // max tics.
+        // FIXME: You should not compare at every clock cycle!
+        if (str_max_ticks != "") {
+            if (currentCycle >= gem5_max_ticks) {
+                const std::vector<std::string> output_stats_commands = {
+                    "import m5.stats",
+                    "m5.stats.dump()",
+                };
+                execPythonCommands(output_stats_commands);
+                // its okay to end gem5 now 
+                // gem5 has dumped the stats
+                // make sure the stats aren't dumped again!
+                did_gem5_end = true;
+                primaryComponentOKToEndSim();
+                return true;
+            }
+        }
 
         // gem5 has dumped the stats, make sure the stats aren't dumped again!
         did_gem5_end = true;

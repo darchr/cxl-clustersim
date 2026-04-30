@@ -85,6 +85,12 @@ parser.add_argument(
     help="SST needs to know if systemd is enabled to call the gem5-side script"
 )
 
+parser.add_argument(
+    "--max-ticks",
+    type=str,
+    required=False,
+    help="Tell SST how long to run. SST passes this to gem5."
+)
 # parse the args!
 args = parser.parse_args()
 
@@ -151,6 +157,11 @@ print(cpu_clock_rate)
 f = open(args.jobs_path)
 jobs = json.loads(f.read())
 f.close()
+
+# Configure how long to run
+if args.max_ticks is None:
+    # The user didn't specify how long to run
+    args.max_ticks = ""
 
 # Note that the length of the dictionary is 1 node more than gem5s as there is
 # metadata attached!
@@ -318,7 +329,8 @@ for node in range(system_nodes):
         "--systemd=" + args.systemd
         
     ]
-    
+    # The user can add more parameters here
+
     cmd = cmd + rest_of_cmd
     
     ports = {
@@ -331,7 +343,8 @@ for node in range(system_nodes):
        "frequency" : cpu_clock_rate,
        "cmd" : " ".join(cmd),
        "debug_flags" : "",
-       "ports" : " ".join(port_list)
+       "ports" : " ".join(port_list),
+       "max_ticks" : args.max_ticks
     }
     # Each of the Gem5 node has to be separately simulated.
     gem5_nodes.append(

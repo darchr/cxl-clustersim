@@ -563,3 +563,97 @@ class ArmComposableMemoryBoard(ArmBoard):
         self.get_local_memory()._post_instantiate()
         self.get_remote_memory()._post_instantiate()
 
+class LegacyArmBoard(ArmBoard):
+    """
+    A high-level ARM board that is compatible with the root refactoring.
+
+    @params
+    :clk_freq: Clock frequency of the board
+    :processor: An abstract processor to use with this board.
+    :local_memory: An abstract memory system taht starts at 0x80000000
+    :cache_hierarchy: An abstract_cache_hierarchy compatible with local and
+            remote memories.
+    :platform: Arm-specific platform to use with this board.
+    :release: Arm-specific extensions to use with this board.
+    """
+
+    def __init__(
+        self,
+        clk_freq: str,
+        processor: AbstractProcessor,
+        memory: AbstractMemorySystem,
+        cache_hierarchy: AbstractCacheHierarchy,
+        platform: VExpress_GEM5_Base = VExpress_GEM5_Foundation(),
+        release: ArmRelease = ArmDefaultRelease()
+    ) -> None:
+        # The parent board calls get_memory(), which needs overriding.
+        super().__init__(
+            clk_freq=clk_freq,
+            processor=processor,
+            memory=memory,
+            cache_hierarchy=cache_hierarchy,
+            platform=platform,
+            release=release,
+        )
+    @overrides(AbstractBoard)
+    def _pre_instantiate(self, full_system: Optional[bool] = None) -> None:
+        """To be called immediately before ``m5.instantiate``. This is where
+        ``_connect_things`` is executed by default and the root object is Root
+        object is created and returned.
+
+        :param full_system: Used to pass the full system flag to the board from
+                            the Simulator module. **Note**: This was
+                            implemented solely to maintain backawards
+                            compatibility with while the Simululator module's
+                            `full_system` flag is in state of deprecation. This
+                            parameter will be removed when it is. When this
+                            occurs whether a simulation is to be run in FS or
+                            SE mode will be determined by the board set."""
+
+        # Is is bad design IMO. In this version of code-refactoring, Root is
+        # initialized in this method. Hiding Root behind the standard library
+        # completely breaks compatibility of the standard library and the old
+        # scripts (like using SST, where m5.initiantiate needs to be in the
+        # client side script to load checkpoints of gem5).
+
+        # 1. Connect the memory, processor, and cache hierarchy.
+        self._connect_things()
+
+        # 2. Resume business without creating the Root object here.
+        self.pci_devices = self._pci_devices
+
+        # The workload needs to know the dtb_file.
+        self.workload.dtb_filename = self._get_dtb_filename()
+
+        # Finally we need to setup the bootloader for the ArmBoard. An ARM
+        # system requires three inputs to simulate a full system: a disk image,
+        # the kernel file and the bootloader file(s).
+        self.realview.setupBootLoader(
+            self, self._get_dtb_filename(), self._bootloader
+        )
+
+        # Calling generateDtb from class ArmSystem to add memory information to
+        # the dtb file.
+        self.generateDtb(self._get_dtb_filename())
+
+
+    def _backward_pre_instantiate(self, root: Root) -> Root:
+        """Looks like the latest version of the standard library code
+        refactoring moved root object to the _pre_instantiate() method. This
+        makes standard library and non standard library incompatible with each
+        other.
+
+        :param root: When root is initialized at the client side script, the
+                object needs to be passed to call the _pre_instantiate()
+                methods of each of the component.
+        """
+        # 3. Call any of the components' `_pre_instantiate` functions.
+        self.get_processor()._pre_instantiate(root)
+        self.get_local_memory()._pre_instantiate(root)
+        self.get_remote_memory()._pre_instantiate(root)
+        if self.get_cache_hierarchy():
+            self.get_cache_hierarchy()._pre_instantiate(root)
+
+        # 4. Return the root object.
+        return root
+

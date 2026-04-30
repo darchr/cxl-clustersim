@@ -863,31 +863,27 @@ sst_config = os.path.join(os.getcwd(), "sst/unified_sst.py")
 
 # Finally, if we are doing a simulation event up to a certain time, then SST
 # must end the specified time. The JSON config will have this value.
-until_when = "0s"
+until_when = "0"
 # This must be in the metadata of the simulation. We need to simulate all the
 # systems until that point to have an accurate simulation stats!
 try:
-    if jobs[0]["metadata"]["max-time"] != "":
+    if jobs[0]["metadata"]["max-ticks"] != "":
         # There is a value! Must be in unit time (i.e. s)
-        until_when = jobs[0]["metadata"]["max-time"]
-        if until_when[-1] != "s":
-            # there is a time but not in seconds! fatally kill the program
-            fatal("Runtime must be in unit seconds (ns, us, ms, s)!")
+        until_when = jobs[0]["metadata"]["max-ticks"]
 except KeyError:
     print("There is no max time set!")
     # There is no max-time. It's okay, we can live with it.
-    until_when = "0s"
 
 # I think we're ready to start the simulation
 sst_command = "mpirun " + \
                   "-np " + str(sst_processes) + \
                   " -- bin/sst -v --add-lib-path=./ "
-# Make sure there is no stop at
-if until_when != "0s":
-    sst_command += "--stop-at=" + until_when
-
-sst_command += " " + sst_config + " -- " + \
-                  "--output-directory=" + experiment_path + " " + \
+sst_command += " " + sst_config + " -- "
+# Make sure there is no stop at and pass this as a parameter to the sst script
+if until_when != "0":
+    sst_command += "--max-ticks=" + until_when + " "
+# Rest of the command
+sst_command += "--output-directory=" + experiment_path + " " + \
                   "--jobs-path=" + jobs_json + " " + \
                   "--clock=" + args.clock + " " + \
                   "--systemd=" + systemd + " " + \

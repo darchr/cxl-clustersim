@@ -133,7 +133,8 @@ class gem5Component: public SST::Component
     gem5::GlobalSimLoopExitEvent* simulateGem5(gem5::Tick n_cycles);
 
     static gem5::Event* doSimLoop(gem5::EventQueue* eventq);
-
+    std::string str_max_ticks;
+    uint64_t gem5_max_ticks;
   public: // register the component to SST
     SST_ELI_REGISTER_COMPONENT(
         gem5Component,

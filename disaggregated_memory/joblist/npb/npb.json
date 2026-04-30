@@ -5,6 +5,7 @@
             "experiment": "npb-7-nodes-1s",
             "checkpoint": "",
             "max-time": "1s",
+            "max-ticks": "4000000000",
             "parallel-eff": ""
         },
         "cpu": {
