@@ -139,6 +139,8 @@ gem5RequestToSSTRequest(gem5::PacketPtr pkt,
                 sst_command_type);
     }
 
+    std::cout << "req: 0x" << std::hex << pkt->getAddr() << std::dec << " type: " << sst_command_type << std::endl;
+
     if ((gem5::MemCmd::Command)pkt->cmd.toInt() == gem5::MemCmd::LoadLockedReq
         || (gem5::MemCmd::Command)pkt->cmd.toInt() == gem5::MemCmd::SwapReq
         || pkt->req->isLockedRMW()) {
@@ -165,6 +167,15 @@ inline void
 inplaceSSTRequestToGem5PacketPtr(gem5::PacketPtr pkt,
                                 SST::Interfaces::StandardMem::Request* request)
 {
+    // there is a chance that the incoming request is not paired with a packet
+    // as this is an BI
+
+    // std::cout << "resp: 0x" << std::hex << pkt->getAddr() << std::dec <<
+    //     " type: " << pkt->cmd.toInt() <<
+    //     " is read: " << pkt->isRead() <<
+    //     " is write: " << pkt->isWrite() << std::endl;
+
+
     pkt->makeResponse();
 
     // Resolve the success of Store Conditionals
@@ -184,7 +195,13 @@ inplaceSSTRequestToGem5PacketPtr(gem5::PacketPtr pkt,
             );
         }
     }
-
+    else if (SST::Interfaces::StandardMem::WriteResp* test =
+            dynamic_cast<SST::Interfaces::StandardMem::WriteResp*>(request)) {
+            // this is a write resp!
+    }
+    else {
+        assert(false && "unknown packet type!\n");
+    }
     // Clear out bus delay notifications
     pkt->headerDelay = pkt->payloadDelay = 0;
 

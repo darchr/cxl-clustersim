@@ -102,6 +102,7 @@ SSTResponderSubComponent::handleTimingReq(
 void
 SSTResponderSubComponent::init(unsigned phase)
 {
+    std::cout << "myname: " << this->getName() << std::endl;
     if (phase == 0) {
         // Added support for MPI send and recv. We have to split and send
         // gem5's data in phases to SST.
@@ -262,28 +263,34 @@ SSTResponderSubComponent::portEventHandler(
         // we can handle a few types of requests.
         if (SST::Interfaces::StandardMem::Read* test =
                 dynamic_cast<SST::Interfaces::StandardMem::Read*>(request)) {
+            std::cout << "saw unpaired read" << std::endl;
             return;
         }
         else if (SST::Interfaces::StandardMem::ReadResp* test =
                 dynamic_cast<SST::Interfaces::StandardMem::ReadResp*>(
                 request)) {
+            std::cout << "saw unpaired read resp" << std::endl;
             return;
         }
         else if (SST::Interfaces::StandardMem::WriteResp* test =
                 dynamic_cast<SST::Interfaces::StandardMem::WriteResp*>(
                 request)) {
+            std::cout << "saw unpaired write resp" << std::endl;
             return;
         }
+        std::cout << "saw maybe inv" << std::endl;
+
         // for Snoop/no response needed
         // presently no consideration for masterId, packet type, flags...
         gem5::RequestPtr req = std::make_shared<gem5::Request>(
-            dynamic_cast<SST::Interfaces::StandardMem::FlushAddr*>(
+            dynamic_cast<SST::Interfaces::StandardMem::InvNotify*>(
                 request)->pAddr,
-            dynamic_cast<SST::Interfaces::StandardMem::FlushAddr*>(
+            dynamic_cast<SST::Interfaces::StandardMem::InvNotify*>(
                 request)->size, 0, 0);
 
         gem5::PacketPtr pkt = new gem5::Packet(
             req, gem5::MemCmd::InvalidateReq);
+        std::cout << "sst resp: 0x" << std::hex << pkt->getAddr() << std::dec << std::endl;
 
         // Clear out bus delay notifications
         pkt->headerDelay = pkt->payloadDelay = 0;

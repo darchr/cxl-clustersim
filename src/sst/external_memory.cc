@@ -135,7 +135,7 @@ ExternalMemory::sendTimingResp(gem5::PacketPtr pkt)
         }
         else {
             ++stats.numWriteIncomingPackets;
-            assert(false && "Should only see read responses!");
+            // assert(false && "Should only see read responses!");
         }
     }
     return return_status;

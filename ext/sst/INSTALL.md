@@ -36,14 +36,18 @@ export PATH=$SST_CORE_HOME/bin:$PATH
 ### Downloading the SST-Elements Source Code
 
 ```sh
-wget https://github.com/sstsimulator/sst-elements/releases/download/v14.0.0_Final/sstelements-14.0.0.tar.gz
-tar xzf sstelements-14.0.0.tar.gz
+https://github.com/kaustav-goswami/sst-elements.git
+# make sure to use the correct branch
+cd sst-elements
+checkout cxl-bi
+./autogen.sh
+cd ..
 ```
 
 ### Installing SST-Elements
 
 ```sh
-cd sst-elements-library-14.0.0
+cd sst-elements
 ./configure --prefix=$SST_CORE_HOME --with-python=/usr/bin/python3-config \
             --with-sst-core=$SST_CORE_HOME
 make all -j$(nproc)

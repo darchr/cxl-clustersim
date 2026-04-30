@@ -315,7 +315,7 @@ class RequestPort: public Port, public AtomicRequestProtocol,
     void
     recvTimingSnoopReq(PacketPtr pkt) override
     {
-        panic("%s was not expecting a timing snoop request.\n", name());
+        warn_once("%s was not expecting a timing snoop request.\n", name());
     }
 
     void
