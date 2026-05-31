@@ -30,14 +30,13 @@ import os
 from abc import ABCMeta
 from typing import (
     List,
+    Optional,
     Sequence,
     Tuple,
-    Optional
 )
 
 import m5
 from m5.objects import (
-    Root,
     Addr,
     AddrRange,
     BadAddr,
@@ -51,6 +50,7 @@ from m5.objects import (
     Pc,
     Port,
     RawDiskImage,
+    Root,
     SrcClockDomain,
     Terminal,
     VncServer,
@@ -59,6 +59,9 @@ from m5.objects import (
     X86ACPIMadtIntSourceOverride,
     X86ACPIMadtIOAPIC,
     X86ACPIMadtLAPIC,
+    X86ACPISrat,
+    X86ACPISratCpuAffinity,
+    X86ACPISratMemAffinity,
     X86E820Entry,
     X86FsLinux,
     X86IntelMPBus,
@@ -66,7 +69,7 @@ from m5.objects import (
     X86IntelMPIOAPIC,
     X86IntelMPIOIntAssignment,
     X86IntelMPProcessor,
-    X86SMBiosBiosInformation
+    X86SMBiosBiosInformation,
 )
 
 from gem5.components.boards.abstract_board import AbstractBoard
@@ -74,11 +77,11 @@ from gem5.components.boards.x86_board import X86Board
 from gem5.components.cachehierarchies.abstract_cache_hierarchy import (
     AbstractCacheHierarchy,
 )
+from gem5.components.memory import SingleChannelDDR4_2400
 from gem5.components.memory.abstract_memory_system import AbstractMemorySystem
 from gem5.components.processors.abstract_processor import AbstractProcessor
 from gem5.utils.override import overrides
 
-from gem5.components.memory import SingleChannelDDR4_2400
 
 class X86ComposableMemoryBoard(X86Board):
     """
@@ -93,12 +96,10 @@ class X86ComposableMemoryBoard(X86Board):
 
     Targets:
         - This board should support memory hotplugging via PROBE
-        - We also need to get ACPI SRAT tables set up for the NUMA ranges.
+        - ACPI SRAT tables are set up for NUMA ranges.
 
     Limitations:
         - Local memory cannot be more than 3 GB (lazy to make this work).
-        - NUMA nodes are faked via the kernel as gem5 X86 does not support
-          ACPI SRAT tables.
 
     Args:
         :clk_freq:
@@ -169,6 +170,8 @@ class X86ComposableMemoryBoard(X86Board):
             self._external_simulator = (
                 self.get_remote_memory()._remote_request_bridge.use_sst_sim
             )
+        # There are two NUMA nodes in this setup
+        self._num_numa_nodes = 2
 
     # @overrides(AbstractBoard)
     # def _pre_i
@@ -195,7 +198,6 @@ class X86ComposableMemoryBoard(X86Board):
 
         # 1. Connect the memory, processor, and cache hierarchy.
         self._connect_things()
-
 
         # """To be called immediately before ``m5.instantiate``. This is where
         # ``_connect_things`` is executed by default and the root object is Root
@@ -243,6 +245,7 @@ class X86ComposableMemoryBoard(X86Board):
 
         # 4. Return the root object.
         return root
+
     @overrides(X86Board)
     def get_memory(self) -> AbstractMemorySystem:
         """Get the memory (RAM) connected to the board.
@@ -331,7 +334,7 @@ class X86ComposableMemoryBoard(X86Board):
             "lpj=7999923",
             "root=/dev/sda1",
             # "init=/bin/bash",
-            "numa=fake=2",
+            # "numa=fake=2",
         ]
 
     @overrides(X86Board)
@@ -400,6 +403,7 @@ class X86ComposableMemoryBoard(X86Board):
         base_entries = []
         ext_entries = []
         madt_entries = []
+        srat_entries = []
         for i in range(self.get_processor().get_num_cores()):
             bp = X86IntelMPProcessor(
                 local_apic_id=i,
@@ -491,6 +495,38 @@ class X86ComposableMemoryBoard(X86Board):
         self.workload.acpi_description_table_pointer.oem_id = "gem5"
         self.workload.acpi_description_table_pointer.rsdt.oem_id = "gem5"
         self.workload.acpi_description_table_pointer.xsdt.oem_id = "gem5"
+
+        # All the CPUs are in the same proximity node.
+        for cpu_id in range(self.get_processor().get_num_cores()):
+            srat_entries.append(
+                X86ACPISratCpuAffinity(
+                    proximity_domain=0, apic_id=cpu_id, flags=1
+                )
+            )
+        # Local memory must be on the same proximity node as the cpus
+        srat_entries.append(
+            X86ACPISratMemAffinity(
+                proximity_domain=0,
+                base_address=self.mem_ranges[0].start,
+                length=self.mem_ranges[0].size(),
+                flags=1,
+            )
+        )
+
+        # Remote memory must be CPU-less
+        srat_entries.append(
+            X86ACPISratMemAffinity(
+                proximity_domain=1,
+                base_address=self.mem_ranges[1].start,
+                length=self.mem_ranges[1].size(),
+                flags=1,
+            )
+        )
+
+        srat = X86ACPISrat(records=srat_entries, oem_id="srat")
+        self.workload.acpi_description_table_pointer.rsdt.entries.append(srat)
+        self.workload.acpi_description_table_pointer.xsdt.entries.append(srat)
+
         entries = [
             # Mark the first megabyte of memory as reserved
             X86E820Entry(addr=0, size="639kB", range_type=1),
@@ -603,8 +639,10 @@ class X86ComposableMemoryBoard(X86Board):
             "root=/dev/sda2",
         ]
 
+
 class X86AlternateComposableMemoryBoard(X86ComposableMemoryBoard):
     """A simple X86 board that allows > 3 GiB local memory"""
+
     def __init__(
         self,
         clk_freq: str,
@@ -614,7 +652,7 @@ class X86AlternateComposableMemoryBoard(X86ComposableMemoryBoard):
         remote_memory: AbstractMemorySystem,
         remote_memory_access_cycles: int = 0,
         remote_memory_address_range: AddrRange = None,
-        starting_memory_limit: str = None
+        starting_memory_limit: str = None,
     ):
         """
         The board accepts the standard inputs of any given board with the
@@ -629,7 +667,7 @@ class X86AlternateComposableMemoryBoard(X86ComposableMemoryBoard):
             cache_hierarchy=cache_hierarchy,
             remote_memory_access_cycles=remote_memory_access_cycles,
             remote_memory_address_range=remote_memory_address_range,
-            starting_memory_limit=starting_memory_limit
+            starting_memory_limit=starting_memory_limit,
         )
         # The kernel uses memory at 0x0 so we need a tiny range of memory for
         # the kernel to function properly
@@ -799,7 +837,46 @@ class X86AlternateComposableMemoryBoard(X86ComposableMemoryBoard):
         self.workload.acpi_description_table_pointer.rsdt.oem_id = "gem5"
         self.workload.acpi_description_table_pointer.xsdt.oem_id = "gem5"
 
+        # All the CPUs are in the same proximity node.
+        for cpu_id in range(self.get_processor().get_num_cores()):
+            srat_entries.append(
+                X86ACPISratCpuAffinity(
+                    proximity_domain=0, apic_id=cpu_id, flags=1
+                )
+            )
+        # Local memory must be on the same proximity node as the cpus.
+        # This is the kernel memory
+        srat_entries.append(
+            X86ACPISratMemAffinity(
+                proximity_domain=0,
+                base_address=self.mem_ranges[0].start,
+                length=self.mem_ranges[0].size(),
+                flags=1,
+            )
+        )
+        # This is the local memory starting at 0x100000000 (4G)
+        srat_entries.append(
+            X86ACPISratMemAffinity(
+                proximity_domain=0,
+                base_address=self.mem_ranges[2].start,
+                length=self.mem_ranges[2].size(),
+                flags=1,
+            )
+        )
 
+        # Remote memory must be CPU-less
+        srat_entries.append(
+            X86ACPISratMemAffinity(
+                proximity_domain=1,
+                base_address=self.mem_ranges[3].start,
+                length=self.mem_ranges[3].size(),
+                flags=1,
+            )
+        )
+
+        srat = X86ACPISrat(records=srat_entries, oem_id="srat")
+        self.workload.acpi_description_table_pointer.rsdt.entries.append(srat)
+        self.workload.acpi_description_table_pointer.xsdt.entries.append(srat)
 
         entries = [
             # Mark the first megabyte of memory as reserved
@@ -841,8 +918,10 @@ class X86AlternateComposableMemoryBoard(X86ComposableMemoryBoard):
             AddrRange(0x0, size=self.kernelMemory.get_size()),
             AddrRange(0xC0000000, size=0x100000),  # For I/0
             AddrRange(0x100000000, size=self.memory.get_size()),
-            AddrRange(int(self._remoteMemoryAddressRange.start),
-                                            size=self.remote_memory.get_size())
+            AddrRange(
+                int(self._remoteMemoryAddressRange.start),
+                size=self.remote_memory.get_size(),
+            ),
         ]
 
         memory.set_memory_range([self.mem_ranges[2]])
@@ -883,10 +962,11 @@ class X86AlternateComposableMemoryBoard(X86ComposableMemoryBoard):
         # Incorporate the cache hierarchy for the motherboard.
         if self.get_cache_hierarchy():
             self.get_cache_hierarchy().incorporate_cache(self)
-            
+
         self.kernelMemory.incorporate_memory(self)
-        self.kernelMemory.get_memory_controllers()[0].port = \
-                                self.get_cache_hierarchy().get_mem_side_port()
+        self.kernelMemory.get_memory_controllers()[
+            0
+        ].port = self.get_cache_hierarchy().get_mem_side_port()
 
         # Create and connect Xbar for additional latency. This will override
         # the cache's incorporate_cache
