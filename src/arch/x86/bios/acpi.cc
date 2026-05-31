@@ -331,6 +331,79 @@ MADT::LAPICOverride::prepareBuf(std::vector<uint8_t>& mem) const
     Record::prepareBuf(mem);
 }
 
+//// SRAT
+SRAT::SRAT::SRAT(const Params& p) :
+    SysDescTable(p, "SRAT", 3),
+    records(p.records)
+{}
+
+Addr
+SRAT::SRAT::writeBuf(PortProxy& phys_proxy, Allocator& alloc,
+        std::vector<uint8_t>& mem) const
+{
+    assert(mem.empty());
+    mem.resize(sizeof(Mem));
+
+    for (const auto& record : records) {
+        auto entry = record->prepare();
+        mem.insert(mem.end(), entry.begin(), entry.end());
+    }
+
+    DPRINTF(ACPI, "SRAT: writing %d records (size: %d)\n",
+            records.size(), mem.size());
+
+    return SysDescTable::writeBuf(phys_proxy, alloc, mem);
+}
+
+void
+SRAT::Record::prepareBuf(std::vector<uint8_t>& mem) const
+{
+    assert(mem.size() >= sizeof(Mem));
+    DPRINTF(ACPI, "SRAT: writing record type %d (size: %d)\n",
+            type, mem.size());
+
+    Mem* header = reinterpret_cast<Mem*>(mem.data());
+    header->type = type;
+    header->length = mem.size();
+}
+
+void
+SRAT::CpuAffinity::prepareBuf(std::vector<uint8_t>& mem) const
+{
+    assert(mem.empty());
+    mem.resize(sizeof(Mem));
+
+    const auto& p = params();
+    Mem* data = reinterpret_cast<Mem*>(mem.data());
+    const uint32_t domain = p.proximity_domain;
+    data->proximityDomainLo = domain & 0xFF;
+    data->proximityDomainHi[0] = (domain >> 8) & 0xFF;
+    data->proximityDomainHi[1] = (domain >> 16) & 0xFF;
+    data->proximityDomainHi[2] = (domain >> 24) & 0xFF;
+    data->apicId = p.apic_id;
+    data->flags = p.flags;
+    data->localSapicEid = p.local_sapic_eid;
+    data->clockDomain = p.clock_domain;
+
+    Record::prepareBuf(mem);
+}
+
+void
+SRAT::MemAffinity::prepareBuf(std::vector<uint8_t>& mem) const
+{
+    assert(mem.empty());
+    mem.resize(sizeof(Mem));
+
+    const auto& p = params();
+    Mem* data = reinterpret_cast<Mem*>(mem.data());
+    data->proximityDomain = p.proximity_domain;
+    data->baseAddress = p.base_address;
+    data->length = p.length;
+    data->flags = p.flags;
+
+    Record::prepareBuf(mem);
+}
+
 } // namespace ACPI
 
 } // namespace X86ISA

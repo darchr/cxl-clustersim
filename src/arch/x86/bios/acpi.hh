@@ -55,6 +55,10 @@
 #include "params/X86ACPIMadtRecord.hh"
 #include "params/X86ACPIRSDP.hh"
 #include "params/X86ACPIRSDT.hh"
+#include "params/X86ACPISrat.hh"
+#include "params/X86ACPISratCpuAffinity.hh"
+#include "params/X86ACPISratMemAffinity.hh"
+#include "params/X86ACPISratRecord.hh"
 #include "params/X86ACPISysDescTable.hh"
 #include "params/X86ACPIXSDT.hh"
 #include "sim/sim_object.hh"
@@ -358,6 +362,111 @@ class MADT : public SysDescTable
 };
 
 } // namespace MADT
+
+namespace SRAT
+{
+
+class Record : public SimObject
+{
+  protected:
+    PARAMS(X86ACPISratRecord);
+
+    struct GEM5_PACKED Mem
+    {
+        uint8_t type = 0;
+        uint8_t length = 0;
+    };
+    static_assert(std::is_trivially_copyable_v<Mem>,
+            "Type not suitable for memcpy.");
+
+    uint8_t type;
+
+    virtual void prepareBuf(std::vector<uint8_t>& mem) const = 0;
+
+  public:
+    Record(const Params& p, uint8_t _type) : SimObject(p), type(_type) {}
+
+    std::vector<uint8_t>
+    prepare() const
+    {
+        std::vector<uint8_t> mem;
+        prepareBuf(mem);
+        return mem;
+    }
+};
+
+class CpuAffinity : public Record
+{
+  protected:
+    PARAMS(X86ACPISratCpuAffinity);
+
+    struct GEM5_PACKED Mem : public Record::Mem
+    {
+        uint8_t proximityDomainLo = 0;
+        uint8_t apicId = 0;
+        uint32_t flags = 0;
+        uint8_t localSapicEid = 0;
+        uint8_t proximityDomainHi[3] = {};
+        uint32_t clockDomain = 0;
+    };
+    static_assert(std::is_trivially_copyable_v<Mem>,
+            "Type not suitable for memcpy.");
+
+    void prepareBuf(std::vector<uint8_t>& mem) const override;
+
+  public:
+    CpuAffinity(const Params& p) : Record(p, 0) {}
+};
+
+class MemAffinity : public Record
+{
+  protected:
+    PARAMS(X86ACPISratMemAffinity);
+
+    struct GEM5_PACKED Mem : public Record::Mem
+    {
+        uint32_t proximityDomain = 0;
+        uint16_t _reserved0 = 0;
+        uint64_t baseAddress = 0;
+        uint64_t length = 0;
+        uint32_t _reserved1 = 0;
+        uint32_t flags = 0;
+        uint64_t _reserved2 = 0;
+    };
+    static_assert(std::is_trivially_copyable_v<Mem>,
+            "Type not suitable for memcpy.");
+    static_assert(sizeof(Mem) == 40,
+            "SRAT memory affinity structure must be 40 bytes");
+
+    void prepareBuf(std::vector<uint8_t>& mem) const override;
+
+  public:
+    MemAffinity(const Params& p) : Record(p, 1) {}
+};
+
+class SRAT : public SysDescTable
+{
+  protected:
+    PARAMS(X86ACPISrat);
+
+    struct GEM5_PACKED Mem : public SysDescTable::Mem
+    {
+        uint32_t reserved1 = 1;
+        uint64_t reserved2 = 0;
+    };
+    static_assert(std::is_trivially_copyable_v<Mem>,
+            "Type not suitable for memcpy.");
+
+    std::vector<Record *> records;
+
+    Addr writeBuf(PortProxy& phys_proxy, Allocator& alloc,
+            std::vector<uint8_t>& mem) const override;
+
+  public:
+    SRAT(const Params &p);
+};
+
+} // namespace SRAT
 
 } // namespace ACPI
 
