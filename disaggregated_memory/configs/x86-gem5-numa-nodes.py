@@ -39,25 +39,36 @@ sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir))
 )
 
+from boards.x86_main_board import (
+    X86AlternateComposableMemoryBoard,
+    X86ComposableMemoryBoard,
+)
+from cachehierarchies.dm_caches import (
+    ClassicPrivateL1PrivateL2DMCache,
+    ClassicPrivateL1PrivateL2SharedL3DMCache,
+)
+
 import m5
 from m5.objects import Root
 
-from boards.x86_main_board import X86ComposableMemoryBoard
-from cachehierarchies.dm_caches import ClassicPrivateL1PrivateL2DMCache, ClassicPrivateL1PrivateL2SharedL3DMCache
-# from memories.remote_memory import RemoteChanneledMemory
-from memories.external_remote_memory import ExternalRemoteMemory
-from gem5.utils.requires import requires
-from gem5.components.memory.simple import SingleChannelSimpleMemory
-from gem5.components.memory.dram_interfaces.ddr4 import DDR4_2400_8x8
 from gem5.components.memory import SingleChannelDDR4_2400
+from gem5.components.memory.dram_interfaces.ddr4 import DDR4_2400_8x8
 from gem5.components.memory.multi_channel import *
-from gem5.components.processors.simple_processor import SimpleProcessor
+from gem5.components.memory.simple import SingleChannelSimpleMemory
 from gem5.components.processors.cpu_types import CPUTypes
+from gem5.components.processors.simple_processor import SimpleProcessor
+from gem5.components.processors.simple_switchable_processor import (
+    SimpleSwitchableProcessor,
+)
 from gem5.isas import ISA
-from gem5.simulate.simulator import Simulator
-from gem5.resources.workload import Workload
-from gem5.resources.workload import *
 from gem5.resources.resource import *
+from gem5.resources.workload import *
+from gem5.resources.workload import Workload
+from gem5.simulate.simulator import Simulator
+
+# from memories.remote_memory import RemoteChanneledMemory
+# from memories.external_remote_memory import ExternalRemoteMemory
+from gem5.utils.requires import requires
 
 # This runs a check to ensure the gem5 binary is compiled for ARM.
 
@@ -93,9 +104,10 @@ cache_hierarchy = ClassicPrivateL1PrivateL2DMCache(
 # )
 # Memory: Dual Channel DDR4 2400 DRAM device. The local memory for the X86
 # board cannot be > 3 GiB because of the I/O hole.
-# local_memory = SingleChannelDDR4_2400(size="2GiB")
-local_memory = SingleChannelSimpleMemory(size="2GiB", latency="50ns",
-                                         latency_var="1ns", bandwidth="16GB/s" )
+local_memory = SingleChannelDDR4_2400(size="2GiB")
+remote_memory = SingleChannelDDR4_2400(size="2GiB")
+# local_memory = SingleChannelSimpleMemory(size="2GiB", latency="50ns",
+#                                          latency_var="1ns", bandwidth="16GB/s" )
 
 # The remote meomry can either be a simple Memory Interface, which is from a
 # different memory arange or it can be a Remote Memory Range, which has an
@@ -107,24 +119,31 @@ local_memory = SingleChannelSimpleMemory(size="2GiB", latency="50ns",
 # remote_memory = RemoteDualChannelDDR4_2400(
 #     size="2GB", remote_offset_latency=1050
 # )
-remote_memory_range = list(map(int, "4294967296,6442450944".split(",")))
-remote_memory = ExternalRemoteMemory(
-    addr_range=remote_memory_range, use_sst_sim = False
-)
+# remote_memory_range = list(map(int, "4294967296,6442450944".split(",")))
+# remote_memory = ExternalRemoteMemory(
+#     addr_range=remote_memory_range, use_sst_sim = False
+# )
 
-# Here we setup the processor. We use a simple processor.
-processor = SimpleProcessor(cpu_type=CPUTypes.ATOMIC, isa=ISA.X86, num_cores=1)
+processor = SimpleSwitchableProcessor(
+    starting_core_type=CPUTypes.KVM,
+    switch_core_type=CPUTypes.O3,
+    isa=ISA.X86,
+    num_cores=8,
+)
 # Here we setup the board which allows us to do Full-System ARM simulations.
 board = X86ComposableMemoryBoard(
-    clk_freq="3GHz",
+    clk_freq="4GHz",
     processor=processor,
     local_memory=local_memory,
     remote_memory=remote_memory,
     cache_hierarchy=cache_hierarchy,
 )
 cmd = [
-    "mount -t sysfs - /sys;",
-    "mount -t proc - /proc;",
+    "numastat;",
+    "numactl --hardware;",
+    "sleep 10;",
+    "numactl --membind=1 -- /home/gem5/stream;",
+    "m5 exit;",
     # "bin/bash"
 ]
 
@@ -150,20 +169,33 @@ cmd = [
 board.set_kernel_disk_workload(
     # kernel=CustomResource("/home/kaustavg/vmlinux-5.4.49-NUMA.arm64"),
     # kernel=CustomResource("/home/kaustavg/vmlinux-5.4.49/vmlinux"),
-    kernel=CustomResource("/home/kaustavg/kernel/x86/linux-6.7/vmlinux"),
+    kernel=CustomResource("/home/kaustavg/kernel/x86/linux-6.9.9/vmlinux"),
     # bootloader=CustomResource(
     #     "/home/kaustavg/.cache/gem5/x86-npb"
     # ),
     disk_image=DiskImageResource(
-        "/home/kaustavg/.cache/gem5/x86-ubuntu-img",
-        root_partition="1",
+        "/home/kaustavg/projects/kg-resources-2/src/shared-gapbs/x86-disk-image-24-04/x86-ubuntu",
+        root_partition="2",
     ),
-    # readfile_contents=" ".join(cmd),
+    readfile_contents=" ".join(cmd),
 )
 # This script will boot two numa nodes in a full system simulation where the
 # gem5 node will be sending instructions to the SST node. the simulation will
 # after displaying numastat information on the terminal, whjic can be viewed
 # from board.terminal.
-simulator = Simulator(board=board)
-simulator.run()
-simulator.run()
+
+
+board._pre_instantiate()
+root = Root(full_system=True, board=board)
+board._post_instantiate()
+
+root.sim_quantum = int(1e9)
+m5.instantiate()
+
+# probably this script is being called only in gem5. Since we are not using
+# the simulator module, we might have to add more m5.simulate()
+m5.simulate()
+m5.simulate()
+m5.simulate()
+processor.switch()
+m5.simulate()

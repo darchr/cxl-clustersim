@@ -28,12 +28,11 @@
 # into one single board.
 import os
 import sys
-
 from typing import (
     List,
+    Optional,
     Sequence,
     Tuple,
-    Optional
 )
 
 # all the source files are one directory above.
@@ -45,7 +44,6 @@ from memories.external_remote_memory import ExternalRemoteMemory
 
 import m5
 from m5.objects import (
-    Root,
     AddrRange,
     ArmSystem,
     BadAddr,
@@ -53,6 +51,7 @@ from m5.objects import (
     IOXBar,
     NoncoherentXBar,
     Port,
+    Root,
     SrcClockDomain,
     Terminal,
     VncServer,
@@ -66,6 +65,10 @@ from m5.objects.ArmSystem import (
 from m5.objects.RealView import (
     VExpress_GEM5_Base,
     VExpress_GEM5_Foundation,
+)
+from m5.util import (
+    fatal,
+    warn,
 )
 from m5.util.fdthelper import (
     Fdt,
@@ -84,10 +87,7 @@ from gem5.components.cachehierarchies.abstract_cache_hierarchy import (
 from gem5.components.memory.abstract_memory_system import AbstractMemorySystem
 from gem5.components.processors.abstract_processor import AbstractProcessor
 from gem5.utils.override import overrides
-from m5.util import (
-    fatal,
-    warn,
-)
+
 
 class ArmComposableMemoryBoard(ArmBoard):
     """
@@ -151,14 +151,14 @@ class ArmComposableMemoryBoard(ArmBoard):
             if isinstance(remote_memory, ExternalRemoteMemory) == True:
                 if remote_memory_access_cycles > 0:
                     print(remote_memory_access_cycles)
-                    print("Cannot simulate ExternalRemoteMemory with latency!")
+                    print("cannot simulate externalremotememory with latency!")
                     exit(-1)
-                # There is an address range specified when the remote memory
+                # there is an address range specified when the remote memory
                 # was initialized.
-                if self._remoteMemory.get_set_using_addr_ranges() == True:
-                    # Set the board's memory range as whatever was used.
-                    self._remoteMemoryAddressRange = (
-                        self._remoteMemory.get_mem_ports()[0][0]
+                if self._remotememory.get_set_using_addr_ranges() == true:
+                    # set the board's memory range as whatever was used.
+                    self._remotememoryaddressrange = (
+                        self._remotememory.get_mem_ports()[0][0]
                     )
         # In case that none of the above set the memory range, we'll set it
         # manually
@@ -196,7 +196,9 @@ class ArmComposableMemoryBoard(ArmBoard):
         if isinstance(self.get_remote_memory(), ExternalRemoteMemory):
             # TODO: This needs to be standardized.
             self._external_simulator = (
-                self.get_remote_memory().get_memory_controllers()[0].use_sst_sim
+                self.get_remote_memory()
+                .get_memory_controllers()[0]
+                .use_sst_sim
             )
             # Check if the user is trying to simulate additional latency with
             # the remote outgoing bridge
@@ -247,7 +249,6 @@ class ArmComposableMemoryBoard(ArmBoard):
         # Calling generateDtb from class ArmSystem to add memory information to
         # the dtb file.
         self.generateDtb(self._get_dtb_filename())
-
 
     def _backward_pre_instantiate(self, root: Root) -> Root:
         """Looks like the latest version of the standard library code
@@ -542,10 +543,12 @@ class ArmComposableMemoryBoard(ArmBoard):
                     # and the latency must be taken care at the external
                     # simulator side. We as gem5 side will connect the system
                     # to the remote memory directly.
-                    for cntr in \
-                            self.get_remote_memory().get_memory_controllers():
-                        cntr.port = \
-                                self.get_cache_hierarchy().get_mem_side_port()
+                    for (
+                        cntr
+                    ) in self.get_remote_memory().get_memory_controllers():
+                        cntr.port = (
+                            self.get_cache_hierarchy().get_mem_side_port()
+                        )
 
         # Incorporate the processor into the motherboard.
         self.get_processor().incorporate_processor(self)
@@ -562,6 +565,7 @@ class ArmComposableMemoryBoard(ArmBoard):
             self.get_cache_hierarchy()._post_instantiate()
         self.get_local_memory()._post_instantiate()
         self.get_remote_memory()._post_instantiate()
+
 
 class LegacyArmBoard(ArmBoard):
     """
@@ -584,7 +588,7 @@ class LegacyArmBoard(ArmBoard):
         memory: AbstractMemorySystem,
         cache_hierarchy: AbstractCacheHierarchy,
         platform: VExpress_GEM5_Base = VExpress_GEM5_Foundation(),
-        release: ArmRelease = ArmDefaultRelease()
+        release: ArmRelease = ArmDefaultRelease(),
     ) -> None:
         # The parent board calls get_memory(), which needs overriding.
         super().__init__(
@@ -595,6 +599,7 @@ class LegacyArmBoard(ArmBoard):
             platform=platform,
             release=release,
         )
+
     @overrides(AbstractBoard)
     def _pre_instantiate(self, full_system: Optional[bool] = None) -> None:
         """To be called immediately before ``m5.instantiate``. This is where
@@ -636,7 +641,6 @@ class LegacyArmBoard(ArmBoard):
         # the dtb file.
         self.generateDtb(self._get_dtb_filename())
 
-
     def _backward_pre_instantiate(self, root: Root) -> Root:
         """Looks like the latest version of the standard library code
         refactoring moved root object to the _pre_instantiate() method. This
@@ -656,4 +660,3 @@ class LegacyArmBoard(ArmBoard):
 
         # 4. Return the root object.
         return root
-

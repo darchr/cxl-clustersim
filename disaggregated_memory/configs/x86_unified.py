@@ -43,14 +43,15 @@ sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir))
 )
 
-from boards.x86_shared_board import (
-   X86SharedMemoryBoard,
-   X86AlternateSharedMemoryBoard
-)
 from boards.x86_main_board import X86ComposableMemoryBoard
-
-from cachehierarchies.dm_caches import ClassicPrivateL1PrivateL2SharedL3DMCache
-from cachehierarchies.dm_caches import ClassicPrivateL1PrivateL2DMCache
+from boards.x86_shared_board import (
+    X86AlternateSharedMemoryBoard,
+    X86SharedMemoryBoard,
+)
+from cachehierarchies.dm_caches import (
+    ClassicPrivateL1PrivateL2DMCache,
+    ClassicPrivateL1PrivateL2SharedL3DMCache,
+)
 from memories.external_remote_memory import ExternalRemoteMemory
 
 import m5
@@ -60,19 +61,16 @@ from m5.objects import (
 )
 
 from gem5.components.memory import (
+    DualChannelDDR3_1600,
     DualChannelDDR4_2400,
     SingleChannelDDR4_2400,
-    DualChannelDDR3_1600,
 )
-
+from gem5.components.processors.cpu_types import CPUTypes
+from gem5.components.processors.simple_processor import SimpleProcessor
 from gem5.isas import ISA
 from gem5.resources.resource import *
 from gem5.resources.workload import *
 from gem5.utils.requires import requires
-
-
-from gem5.components.processors.simple_processor import SimpleProcessor
-from gem5.components.processors.cpu_types import CPUTypes
 
 # SST passes a couple of arguments for this system to simulate.
 parser = argparse.ArgumentParser()
@@ -116,7 +114,7 @@ parser.add_argument(
     "--core-frequency",
     type=str,
     required=True,
-    help="Define the clock frequency of the cores"
+    help="Define the clock frequency of the cores",
 )
 
 parser.add_argument(
@@ -223,7 +221,7 @@ parser.add_argument(
     type=str,
     required=True,
     choices=["true", "false"],
-    help=""
+    help="",
 )
 parser.add_argument(
     "--cmd",
@@ -235,8 +233,7 @@ parser.add_argument(
     "--disk-path",
     type=str,
     required=False,
-    default=
-        "/home/kaustavg/projects/gem5-resources/src/benchmarks/x86/shared-simple-graphs/x86-disk-image-24-04/x86-ubuntu",
+    default="/home/kaustavg/projects/gem5-resources/src/benchmarks/x86/shared-simple-graphs/x86-disk-image-24-04/x86-ubuntu",
     help="",
 )
 parser.add_argument(
@@ -268,7 +265,7 @@ parser.add_argument(
     type=str,
     required=True,
     choices=["true", "false"],
-    help="Optionally the user can simulate the system with systemd"
+    help="Optionally the user can simulate the system with systemd",
 )
 args = parser.parse_args()
 
@@ -301,10 +298,8 @@ if args.local_memory_size == "":
 
 
 use_sst = {"true": True, "false": False}[args.is_composable]
-ff_core = {"kvm": CPUTypes.KVM,
-           "atomic": CPUTypes.ATOMIC}[args.ff_core_type]
-roi_core = {"timing": CPUTypes.TIMING,
-           "o3": CPUTypes.O3}[args.roi_core_type]
+ff_core = {"kvm": CPUTypes.KVM, "atomic": CPUTypes.ATOMIC}[args.ff_core_type]
+roi_core = {"timing": CPUTypes.TIMING, "o3": CPUTypes.O3}[args.roi_core_type]
 core_count = int(args.core_count)
 core_freq = args.core_frequency
 systemd = {"true": True, "false": False}[args.systemd]
@@ -313,32 +308,38 @@ systemd = {"true": True, "false": False}[args.systemd]
 core_to_use = ff_core
 if use_sst == True:
     core_to_use = roi_core
-cache_type = {  "l1l2l3": ClassicPrivateL1PrivateL2SharedL3DMCache(
-                        l1i_size=args.l1i_size,
-                        l1d_size=args.l1d_size,
-                        l2_size=args.l2_size,
-                        l3_size=args.l3_size,
-                        l3_assoc=args.l3_assoc),
-                "l1l2": ClassicPrivateL1PrivateL2DMCache(
-                        l1i_size=args.l1i_size,
-                        l1d_size=args.l1d_size,
-                        l2_size=args.l2_size,)}[args.cache_type]
+cache_type = {
+    "l1l2l3": ClassicPrivateL1PrivateL2SharedL3DMCache(
+        l1i_size=args.l1i_size,
+        l1d_size=args.l1d_size,
+        l2_size=args.l2_size,
+        l3_size=args.l3_size,
+        l3_assoc=args.l3_assoc,
+    ),
+    "l1l2": ClassicPrivateL1PrivateL2DMCache(
+        l1i_size=args.l1i_size,
+        l1d_size=args.l1d_size,
+        l2_size=args.l2_size,
+    ),
+}[args.cache_type]
 
-local_mem = {"ddr3": DualChannelDDR3_1600(size=args.local_memory_size),
-             "": DualChannelDDR4_2400(size=args.local_memory_size),
-             "ddr4": SingleChannelDDR4_2400(size=args.local_memory_size),
-             "hbm": None,
-             "ddr5": None}[args.local_memory_type]
+local_mem = {
+    "ddr3": DualChannelDDR3_1600(size=args.local_memory_size),
+    "": DualChannelDDR4_2400(size=args.local_memory_size),
+    "ddr4": SingleChannelDDR4_2400(size=args.local_memory_size),
+    "hbm": None,
+    "ddr5": None,
+}[args.local_memory_type]
 
 
 remote_mem_start = int(args.remote_memory_start, 16)
 remote_mem_end = int(args.remote_memory_end, 16)
 remote_memory_range = AddrRange(remote_mem_start, remote_mem_end)
 
-print(remote_mem_start, args.remote_memory_start, remote_memory_range.start)
 
 shared_memory = {"true": True, "false": False}[args.remote_memory_shared]
-
+print("range: ", remote_mem_start, remote_mem_end, shared_memory)
+assert shared_memory == False
 # Check if the cmd is from SST. We ignore it.
 if args.cmd != "":
     print(args.cmd)
@@ -348,8 +349,7 @@ else:
 
 # Make sure that the resoure paths are not overwritten
 if args.disk_path == "":
-    args.disk_path = \
-        "/home/kaustavg/projects/gem5-resources/src/benchmarks/x86/shared-simple-graphs/x86-disk-image-24-04/x86-ubuntu"
+    args.disk_path = "/home/kaustavg/projects/gem5-resources/src/benchmarks/x86/shared-simple-graphs/x86-disk-image-24-04/x86-ubuntu"
 
 if args.kernel_path == "":
     args.kernel_path = "/home/kaustavg/kernel/x86/linux-6.9.9/vmlinux"
@@ -358,8 +358,9 @@ if args.kernel_path == "":
 # This runs a check to ensure the gem5 binary is compiled for ARM.
 requires(isa_required=ISA.X86)
 
-processor = SimpleProcessor(cpu_type=core_to_use, isa=ISA.X86,
-                            num_cores=int(args.core_count))
+processor = SimpleProcessor(
+    cpu_type=core_to_use, isa=ISA.X86, num_cores=int(args.core_count)
+)
 
 cache_hierarchy = cache_type
 
@@ -369,7 +370,7 @@ remote_memory = ExternalRemoteMemory(
 )
 
 board = None
-# Here we setup the board which allows us to do Full-System ARM simulations.
+# Here we setup the board which allows us to do Full-System X86 simulations.
 if shared_memory == False:
     board = X86ComposableMemoryBoard(
         clk_freq=core_freq,
@@ -386,9 +387,8 @@ else:
         cache_hierarchy=cache_hierarchy,
         local_memory=local_memory,
         remote_memory=remote_memory,
-        remote_memory_address_range=remote_memory_range
+        remote_memory_address_range=remote_memory_range,
     )
-
 
 workload = CustomWorkload(
     function="set_kernel_disk_workload",
@@ -452,4 +452,3 @@ else:
     if use_sst == False:
         m5.simulate()
     # otherwise just let SST do the simulation.
-

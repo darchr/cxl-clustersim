@@ -27,6 +27,7 @@
 # Creating an x86 board that can simulate more than 3 GB memory.
 
 import os
+import sys
 from abc import ABCMeta
 from typing import (
     List,
@@ -34,6 +35,13 @@ from typing import (
     Sequence,
     Tuple,
 )
+
+# all the source files are one directory above.
+sys.path.append(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir))
+)
+
+from memories.external_remote_memory import ExternalRemoteMemory
 
 import m5
 from m5.objects import (
@@ -46,7 +54,6 @@ from m5.objects import (
     IdeDisk,
     IOXBar,
     NoncoherentXBar,
-    OutgoingRequestBridge,
     Pc,
     Port,
     RawDiskImage,
@@ -70,6 +77,10 @@ from m5.objects import (
     X86IntelMPIOIntAssignment,
     X86IntelMPProcessor,
     X86SMBiosBiosInformation,
+)
+from m5.util import (
+    fatal,
+    warn,
 )
 
 from gem5.components.boards.abstract_board import AbstractBoard
@@ -133,22 +144,37 @@ class X86ComposableMemoryBoard(X86Board):
         # The parent board calls get_memory(), which needs overriding.
         self._localMemory = local_memory
         self._remoteMemory = remote_memory
+        # TODO: Make sure simulation crashes if local memory is > 3GiB
+        # make sure local memory is locally set and remote memory is set after
+        # 4G
         # We need to set the remote memory range before init for the remote
         # memory. If the user did not specify the remote_memory_addr_range,
         # then we'd assume that the remote memory starts where local memory
         # ends.
-        if isinstance(remote_memory, OutgoingRequestBridge) == False:
-            if remote_memory_address_range is None:
+        if isinstance(remote_memory, ExternalRemoteMemory) == True:
+            if remote_memory.get_physical_address_ranges() is None:
                 # If the remote_memory_addr_range is not provided, we'll assume
                 # that it starts at 0x100000000 + local_memory_size and ends at
                 # it's own size
+                fatal("External memory address range is not set!")
+                warn(
+                    "An address range is not specified! The simulation may "
+                    "crash!"
+                )
                 self._remoteMemoryAddressRange = AddrRange(
                     0x100000000 + self._localMemory.get_size(),
                     size=self._remoteMemory.get_size(),
                 )
             else:
-                self._remoteMemoryAddressRange = remote_memory_address_range
+                # We trust the user to put the correct memory range.
+                print(
+                    "remote_range", remote_memory.get_physical_address_ranges()
+                )
+                self._remoteMemoryAddressRange = (
+                    remote_memory.get_physical_address_ranges()[0]
+                )
         else:
+            # This is gem5 memory. Let gem5 figure our the memory range.
             self._remoteMemoryAddressRange = None
         super().__init__(
             clk_freq=clk_freq,
@@ -165,11 +191,21 @@ class X86ComposableMemoryBoard(X86Board):
         # Set the external simulator variable to whatever the user has set in
         # the ExternalRemoteMemory component.
         self._external_simulator = False
-        if isinstance(self.get_remote_memory(), OutgoingRequestBridge):
+        if isinstance(self.get_remote_memory(), ExternalRemoteMemory):
             # TODO: This needs to be standardized.
             self._external_simulator = (
-                self.get_remote_memory()._remote_request_bridge.use_sst_sim
+                self.get_remote_memory()
+                .get_memory_controllers()[0]
+                .use_sst_sim
             )
+            # Check if the user is trying to simulate additional latency with
+            # the remote outgoing bridge
+            if self._remote_memory_access_cycles > 0:
+                fatal(
+                    "Trying to simulate remote memory with a gem5-side \
+                        latency. We recommed adding this latency to the \
+                        SST-side script"
+                )
         # There are two NUMA nodes in this setup
         self._num_numa_nodes = 2
 
@@ -310,21 +346,21 @@ class X86ComposableMemoryBoard(X86Board):
 
         memory_ranges = [
             AddrRange(start=0x0, size=local_memory.get_size()),
-            AddrRange(start=0x100000000, size=remote_memory.get_size()),
+            # Remote memory is set using addresses!
+            self._remoteMemoryAddressRange,
         ]
 
         self.mem_ranges = [
             AddrRange(start=0x0, size=local_memory.get_size()),
-            AddrRange(start=0x100000000, size=remote_memory.get_size()),
+            self._remoteMemoryAddressRange,
             AddrRange(0xC0000000, size=0x100000),  # For I/0
         ]
 
         local_memory.set_memory_range(
             [AddrRange(start=0x0, size=local_memory.get_size())]
         )
-        remote_memory.set_memory_range(
-            [AddrRange(start=0x100000000, size=remote_memory.get_size())]
-        )
+        # XXX: Stop hardcoding addresses @kg
+        remote_memory.set_memory_range([self._remoteMemoryAddressRange])
 
     @overrides(X86Board)
     def get_default_kernel_args(self) -> List[str]:
@@ -517,8 +553,8 @@ class X86ComposableMemoryBoard(X86Board):
         srat_entries.append(
             X86ACPISratMemAffinity(
                 proximity_domain=1,
-                base_address=self.mem_ranges[1].start,
-                length=self.mem_ranges[1].size(),
+                base_address=self._remoteMemoryAddressRange.start,
+                length=self._remoteMemoryAddressRange.size(),
                 flags=1,
             )
         )
@@ -538,9 +574,10 @@ class X86ComposableMemoryBoard(X86Board):
                 size=f"{self.mem_ranges[0].size() - 0x100000:d}B",
                 range_type=1,
             ),
+            # XXX: Stop hardcoding addresses @kg
             X86E820Entry(
-                addr=0x100000000,
-                size=f"{self.mem_ranges[1].size()}B",
+                addr=self._remoteMemoryAddressRange.start,
+                size=f"{self._remoteMemoryAddressRange.size()}B",
                 range_type=1,
             ),
         ]
