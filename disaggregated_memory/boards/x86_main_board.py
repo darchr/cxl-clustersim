@@ -153,29 +153,21 @@ class X86ComposableMemoryBoard(X86Board):
         # ends.
         if isinstance(remote_memory, ExternalRemoteMemory) == True:
             if remote_memory.get_physical_address_ranges() is None:
-                # If the remote_memory_addr_range is not provided, we'll assume
-                # that it starts at 0x100000000 + local_memory_size and ends at
-                # it's own size
+                # If the remote_memory_addr_range is not provided, we'll crash
+                # the simulation as ranges could not be verified.
                 fatal("External memory address range is not set!")
-                warn(
-                    "An address range is not specified! The simulation may "
-                    "crash!"
-                )
-                self._remoteMemoryAddressRange = AddrRange(
-                    0x100000000 + self._localMemory.get_size(),
-                    size=self._remoteMemory.get_size(),
-                )
             else:
                 # We trust the user to put the correct memory range.
-                print(
-                    "remote_range", remote_memory.get_physical_address_ranges()
-                )
                 self._remoteMemoryAddressRange = (
                     remote_memory.get_physical_address_ranges()[0]
                 )
         else:
-            # This is gem5 memory. Let gem5 figure our the memory range.
-            self._remoteMemoryAddressRange = None
+            # This is gem5 memory. Let gem5 figure our the memory range. Warn
+            # the user that this memory starts at 4G
+            warn("A range was not provided. Assuming memory starts a 4G")
+            self._remoteMemoryAddressRange = AddrRange(
+                start=0x100000000, size=remote_memory.get_size()
+            )
         super().__init__(
             clk_freq=clk_freq,
             processor=processor,
@@ -323,7 +315,7 @@ class X86ComposableMemoryBoard(X86Board):
         """
         return self.get_remote_memory().get_mem_ports()
 
-    def get_remote_memory_addr_range(self):
+    def get_remote_memory_addr_range(self) -> AddrRange:
         """Get the range of the remote memory. This can be omitted in the
             future iteration of the board.
         :returns: AddrRange of the remote memory
@@ -344,23 +336,22 @@ class X86ComposableMemoryBoard(X86Board):
 
         memory_size = [local_memory.get_size(), remote_memory.get_size()]
 
-        memory_ranges = [
-            AddrRange(start=0x0, size=local_memory.get_size()),
-            # Remote memory is set using addresses!
-            self._remoteMemoryAddressRange,
-        ]
-
+        # Make sure ranges are compatible with both gem5 and SST configurations
         self.mem_ranges = [
             AddrRange(start=0x0, size=local_memory.get_size()),
-            self._remoteMemoryAddressRange,
+            self.get_remote_memory_addr_range(),
             AddrRange(0xC0000000, size=0x100000),  # For I/0
         ]
+        # else:
+        # This is gem5 AbstractMemorySystem which does not use address
+        # ranges explicitly
+        #     pass
 
         local_memory.set_memory_range(
             [AddrRange(start=0x0, size=local_memory.get_size())]
         )
         # XXX: Stop hardcoding addresses @kg
-        remote_memory.set_memory_range([self._remoteMemoryAddressRange])
+        remote_memory.set_memory_range([self.get_remote_memory_addr_range()])
 
     @overrides(X86Board)
     def get_default_kernel_args(self) -> List[str]:
@@ -369,8 +360,6 @@ class X86ComposableMemoryBoard(X86Board):
             "console=ttyS0",
             "lpj=7999923",
             "root=/dev/sda1",
-            # "init=/bin/bash",
-            # "numa=fake=2",
         ]
 
     @overrides(X86Board)
@@ -553,8 +542,8 @@ class X86ComposableMemoryBoard(X86Board):
         srat_entries.append(
             X86ACPISratMemAffinity(
                 proximity_domain=1,
-                base_address=self._remoteMemoryAddressRange.start,
-                length=self._remoteMemoryAddressRange.size(),
+                base_address=self.get_remote_memory_addr_range().start,
+                length=self.get_remote_memory_addr_range().size(),
                 flags=1,
             )
         )
@@ -576,8 +565,8 @@ class X86ComposableMemoryBoard(X86Board):
             ),
             # XXX: Stop hardcoding addresses @kg
             X86E820Entry(
-                addr=self._remoteMemoryAddressRange.start,
-                size=f"{self._remoteMemoryAddressRange.size()}B",
+                addr=self.get_remote_memory_addr_range().start,
+                size=f"{self.get_remote_memory_addr_range().size()}B",
                 range_type=1,
             ),
         ]
@@ -587,7 +576,6 @@ class X86ComposableMemoryBoard(X86Board):
             X86E820Entry(addr=0xFFFF0000, size="64kB", range_type=2)
         )
 
-        print(entries)
         self.workload.e820_table.entries = entries
 
     def add_remote_link(self) -> None:
@@ -727,7 +715,6 @@ class X86AlternateComposableMemoryBoard(X86ComposableMemoryBoard):
         APIC_range_size = 1 << 12
 
         # Setup memory system specific settings.
-        print(self.get_cache_hierarchy())
         if self.get_cache_hierarchy().is_ruby():
             self.pc.attachIO(self.get_io_bus(), [self.pc.south_bridge.ide.dma])
         else:
@@ -933,8 +920,8 @@ class X86AlternateComposableMemoryBoard(X86ComposableMemoryBoard):
                 range_type=1,
             ),
             X86E820Entry(
-                addr=int(self._remoteMemoryAddressRange.start),
-                size=f"{self.remote_memory.get_size()}B",
+                addr=int(self.get_remote_memory_addr_range().start),
+                size=f"{self.get_remote_memory_addr_range().size()}B",
                 range_type=12,
             ),
         ]
@@ -956,8 +943,8 @@ class X86AlternateComposableMemoryBoard(X86ComposableMemoryBoard):
             AddrRange(0xC0000000, size=0x100000),  # For I/0
             AddrRange(0x100000000, size=self.memory.get_size()),
             AddrRange(
-                int(self._remoteMemoryAddressRange.start),
-                size=self.remote_memory.get_size(),
+                int(self.get_remote_memory_addr_range().start),
+                size=self.get_remote_memory_addr_range().size,
             ),
         ]
 
