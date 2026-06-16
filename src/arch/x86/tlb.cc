@@ -468,15 +468,18 @@ TLB::translate(const RequestPtr &req,
             bool inUser = m5Reg.cpl == 3 && !(flags & CPL0FlagBit);
             CR0 cr0 = tc->readMiscRegNoEffect(misc_reg::Cr0);
             bool badWrite = (!entry->writable && (inUser || cr0.wp));
+            // CLFLUSH/CLFLUSHOPT/CLWB are stores in the pipeline but may
+            // target read-only pages; skip the write-permission check.
             if ((inUser && !entry->user) ||
-                (mode == BaseMMU::Write && badWrite)) {
+                (mode == BaseMMU::Write && badWrite &&
+                 !req->isCacheClean())) {
                 // The page must have been present to get into the TLB in
                 // the first place. We'll assume the reserved bits are
                 // fine even though we're not checking them.
                 return std::make_shared<PageFault>(vaddr, true, mode, inUser,
                                                    false);
             }
-            if (storeCheck && badWrite) {
+            if (storeCheck && badWrite && !req->isCacheClean()) {
                 // This would fault if this were a write, so return a page
                 // fault that reflects that happening.
                 return std::make_shared<PageFault>(
@@ -509,9 +512,6 @@ TLB::translateAtomic(const RequestPtr &req, ThreadContext *tc,
     BaseMMU::Mode mode)
 {
     bool delayedResponse;
-    // CLFLUSHOPT/WB/FLUSH should be treated as read for protection checks
-    if (req->isCacheClean())
-        mode = BaseMMU::Read;
     return TLB::translate(req, tc, NULL, mode, delayedResponse, false);
 }
 
@@ -519,9 +519,6 @@ Fault
 TLB::translateFunctional(const RequestPtr &req, ThreadContext *tc,
     BaseMMU::Mode mode)
 {
-    // CLFLUSHOPT/WB/FLUSH should be treated as read for protection checks
-    if (req->isCacheClean())
-        mode = BaseMMU::Read;
     unsigned logBytes;
     const Addr vaddr = req->getVaddr();
     Addr addr = vaddr;
@@ -559,9 +556,6 @@ TLB::translateTiming(const RequestPtr &req, ThreadContext *tc,
 {
     bool delayedResponse;
     assert(translation);
-    // CLFLUSHOPT/WB/FLUSH should be treated as read for protection checks
-    if (req->isCacheClean())
-        mode = BaseMMU::Read;
     Fault fault =
         TLB::translate(req, tc, translation, mode, delayedResponse, true);
     if (!delayedResponse)

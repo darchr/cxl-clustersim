@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2013, 2018-2019, 2023-2024 ARM Limited
+ * Copyright (c) 2012-2013, 2018-2019, 2023-2025 Arm Limited
  * All rights reserved.
  *
  * The license below extends only to copyright in the software and shall
@@ -55,6 +55,7 @@
 #include "debug/HWPrefetch.hh"
 #include "mem/cache/compressors/base.hh"
 #include "mem/cache/mshr.hh"
+#include "mem/cache/mshr_queue.hh"
 #include "mem/cache/prefetch/base.hh"
 #include "mem/cache/queue_entry.hh"
 #include "mem/cache/tags/compressed_tags.hh"
@@ -129,8 +130,9 @@ BaseCache::BaseCache(const BaseCacheParams &p, unsigned blk_size)
         genTagExtractor(tags->params().indexing_policy));
 
     tags->tagsInit();
-    if (prefetcher)
+    if (prefetcher) {
         prefetcher->setParentInfo(system, getProbeManager(), getBlockSize());
+    }
 
     fatal_if(compressor && !dynamic_cast<CompressedTags*>(tags),
         "The tags of compressed cache %s must derive from CompressedTags",
@@ -223,6 +225,56 @@ BaseCache::inRange(Addr addr) const
        }
     }
     return false;
+}
+
+void
+BaseCache::allocateWriteBuffer(PacketPtr pkt, Tick time)
+{
+    // should only see writes, clean evicts, or forced PoC WriteCleans here
+    assert(pkt->isWrite() || pkt->cmd == MemCmd::CleanEvict ||
+           (pkt->cmd == MemCmd::WriteClean && pkt->req->isForcedPoCFlush()));
+
+    Addr blk_addr = pkt->getBlockAddr(blkSize);
+
+    // If using compression, on evictions the block is decompressed and
+    // the operation's latency is added to the payload delay. Consume
+    // that payload delay here, meaning that the data is always stored
+    // uncompressed in the writebuffer
+    if (compressor) {
+        time += pkt->payloadDelay;
+        pkt->payloadDelay = 0;
+    }
+
+    WriteQueueEntry *wq_entry =
+        writeBuffer.findMatch(blk_addr, pkt->isSecure());
+    if (wq_entry && !wq_entry->inService) {
+        DPRINTF(Cache, "Potential to merge writeback %s", pkt->print());
+    }
+
+    WriteQueueEntry *alloc_entry =
+        writeBuffer.allocate(blk_addr, blkSize, pkt, time, order++);
+
+    if (pkt->req->isForcedPoCFlush()) {
+        writeBuffer.moveToFront(alloc_entry);
+    }
+
+    if (writeBuffer.isFull()) {
+        setBlocked((BlockedCause)MSHRQueue_WriteBuffer);
+    }
+
+    // schedule the send
+    schedMemSideSendEvent(time);
+}
+
+void
+BaseCache::markInService(WriteQueueEntry *entry)
+{
+    bool wasFull = writeBuffer.isFull();
+    writeBuffer.markInService(entry);
+
+    if (wasFull && !writeBuffer.isFull()) {
+        clearBlocked(Blocked_NoWBBuffers);
+    }
 }
 
 void
@@ -352,7 +404,7 @@ BaseCache::handleTimingReqMiss(PacketPtr pkt, MSHR *mshr, CacheBlk *blk,
                 // port and also takes into account the additional
                 // delay of the xbar.
                 mshr->allocateTarget(pkt, forward_time, order++,
-                                     allocOnFill(pkt->cmd));
+                                     allocOnFill(pkt));
                 if (mshr->getNumTargets() >= numTarget) {
                     noTargetMSHR = mshr;
                     setBlocked(Blocked_NoTargets);
@@ -393,7 +445,7 @@ BaseCache::handleTimingReqMiss(PacketPtr pkt, MSHR *mshr, CacheBlk *blk,
                 // point it must have seemed like we needed it...
                 assert((pkt->needsWritable() &&
                     !blk->isSet(CacheBlk::WritableBit)) ||
-                    pkt->req->isCacheMaintenance());
+                    pkt->req->isForcedPoCFlush());
                 blk->clearCoherenceBits(CacheBlk::ReadableBit);
             }
             // Here we are using forward_time, modelling the latency of
@@ -650,14 +702,19 @@ BaseCache::recvAtomic(PacketPtr pkt)
     PacketList writebacks;
     bool satisfied = access(pkt, blk, lat, writebacks);
 
-    if (pkt->isClean() && blk && blk->isSet(CacheBlk::DirtyBit)) {
-        // A cache clean opearation is looking for a dirty
-        // block. If a dirty block is encountered a WriteClean
-        // will update any copies to the path to the memory
-        // until the point of reference.
-        DPRINTF(CacheVerbose, "%s: packet %s found block: %s\n",
-                __func__, pkt->print(), blk->print());
-        PacketPtr wb_pkt = writecleanBlk(blk, pkt->req->getDest(), pkt->id);
+    if (pkt->req->isForcedPoCFlush() && pkt->isClean() && blk &&
+        blk->isValid() && !pkt->satisfied()) {
+        // A forced PoC flush found a valid block (dirty or clean). Issue a
+        // WriteClean so that the memory controller sees a write for every
+        // flushed line, enabling CXL devices to observe the latest data.
+        // Guard on !satisfied() because in the atomic path the same packet
+        // object traverses all cache levels; a lower level may have already
+        // set satisfied and generated a WriteClean.
+        DPRINTF(CacheVerbose, "%s: packet %s found block (dirty=%d): %s\n",
+                __func__, pkt->print(), blk->isSet(CacheBlk::DirtyBit),
+                blk->print());
+        PacketPtr wb_pkt = writecleanBlk(blk, pkt->req->getDest(), pkt->id,
+                                         pkt->req);
         writebacks.push_back(wb_pkt);
         pkt->setSatisfied();
     }
@@ -855,9 +912,41 @@ BaseCache::cmpAndSwap(CacheBlk *blk, PacketPtr pkt)
     }
 }
 
+MSHR *
+BaseCache::allocateMissBuffer(PacketPtr pkt, Tick time, bool sched_send)
+{
+    MSHR *mshr = mshrQueue.allocate(pkt->getBlockAddr(blkSize), blkSize,
+                                    pkt, time, order++, allocOnFill(pkt));
+
+    if (pkt->req->isForcedPoCFlush()) {
+        mshrQueue.moveToFront(mshr);
+    }
+
+    if (mshrQueue.isFull()) {
+        setBlocked((BlockedCause)MSHRQueue_MSHRs);
+    }
+
+    if (sched_send) {
+        schedMemSideSendEvent(time);
+    }
+
+    return mshr;
+}
+
 QueueEntry*
 BaseCache::getNextQueueEntry()
 {
+    // Forced PoC flushes are serviced before other pending requests.
+    WriteQueueEntry *forced_wq = writeBuffer.getForcedPoCFlushNext();
+    if (forced_wq) {
+        return forced_wq;
+    }
+
+    MSHR *forced_mshr = mshrQueue.getForcedPoCFlushNext();
+    if (forced_mshr) {
+        return forced_mshr;
+    }
+
     // Check both MSHR queue and write buffer for potential requests,
     // note that null does not mean there is no request, it could
     // simply be that it is not ready
@@ -1258,9 +1347,9 @@ BaseCache::access(PacketPtr pkt, CacheBlk *&blk, Cycles &lat,
     DPRINTF(Cache, "%s for %s %s\n", __func__, pkt->print(),
             blk ? "hit " + blk->print() : "miss");
 
-    if (pkt->req->isCacheMaintenance()) {
-        // A cache maintenance operation is always forwarded to the
-        // memory below even if the block is found in dirty state.
+    if (pkt->req->isForcedPoCFlush()) {
+        // CLFLUSH / CLFLUSHOPT / CLWB always propagate to the point of
+        // coherency regardless of clusivity or writeback_clean settings.
 
         // We defer any changes to the state of the block until we
         // create and mark as in service the mshr for the downstream
@@ -1757,7 +1846,8 @@ BaseCache::writebackBlk(CacheBlk *blk)
 }
 
 PacketPtr
-BaseCache::writecleanBlk(CacheBlk *blk, Request::Flags dest, PacketId id)
+BaseCache::writecleanBlk(CacheBlk *blk, Request::Flags dest, PacketId id,
+                         const RequestPtr &flush_req)
 {
     RequestPtr req = std::make_shared<Request>(
         regenerateBlkAddr(blk), blkSize, 0, Request::wbRequestorId);
@@ -1766,6 +1856,15 @@ BaseCache::writecleanBlk(CacheBlk *blk, Request::Flags dest, PacketId id)
         req->setFlags(Request::SECURE);
     }
     req->taskId(blk->getTaskId());
+
+    // CLFLUSH/CLWB generate a WriteClean at the first cache level that holds
+    // the line.  Copy the PoC flush flags so doWritebacks() always pushes the
+    // packet toward memory and the write queue gives it priority.
+    if (flush_req && flush_req->isForcedPoCFlush()) {
+        req->setFlags(Request::CLEAN | Request::DST_POC);
+        if (flush_req->isCacheInvalidate())
+            req->setFlags(Request::INVALIDATE);
+    }
 
     PacketPtr pkt = new Packet(req, MemCmd::WriteClean, blkSize, id);
 
@@ -1934,11 +2033,28 @@ BaseCache::sendMSHRQueuePacket(MSHR* mshr)
     // as forwarded packets may already have existing state
     pkt->pushSenderState(mshr);
 
-    if (pkt->isClean() && blk && blk->isSet(CacheBlk::DirtyBit)) {
-        // A cache clean opearation is looking for a dirty block. Mark
-        // the packet so that the destination xbar can determine that
-        // there will be a follow-up write packet as well.
+    // For CXL coherence: generate a WriteClean at the first cache level that
+    // holds the block (dirty or clean) so that mem_ctrl.writeReqs is
+    // incremented for every flushed line.  Only do this if the packet has NOT
+    // already been satisfied by a lower level cache, because CMO packets are
+    // forwarded by reference across levels (createMissPacket returns nullptr
+    // for isClean() packets, so each level shallow-copies the same tgt_pkt).
+    // A second setSatisfied() on an already-satisfied packet would assert.
+    const bool gen_cxl_writeback = pkt->req->isForcedPoCFlush() &&
+        pkt->isClean() && blk && blk->isValid() && !pkt->satisfied();
+
+    if (gen_cxl_writeback) {
         pkt->setSatisfied();
+        // Queue the WriteClean before forwarding the flush so the dirty line
+        // reaches memory (and SST) even when only 1-2 cache lines were written.
+        DPRINTF(CacheVerbose, "%s: packet %s found block (dirty=%d): %s\n",
+                __func__, pkt->print(), blk->isSet(CacheBlk::DirtyBit),
+                blk->print());
+        PacketPtr wb_pkt = writecleanBlk(blk, pkt->req->getDest(),
+                                         pkt->id, pkt->req);
+        PacketList writebacks;
+        writebacks.push_back(wb_pkt);
+        doWritebacks(writebacks, 0);
     }
 
     if (!memSidePort.sendTimingReq(pkt)) {
@@ -1964,20 +2080,6 @@ BaseCache::sendMSHRQueuePacket(MSHR* mshr)
         bool pending_modified_resp = !pkt->hasSharers() &&
             pkt->cacheResponding();
         markInService(mshr, pending_modified_resp);
-
-        if (pkt->isClean() && blk && blk->isSet(CacheBlk::DirtyBit)) {
-            // A cache clean opearation is looking for a dirty
-            // block. If a dirty block is encountered a WriteClean
-            // will update any copies to the path to the memory
-            // until the point of reference.
-            DPRINTF(CacheVerbose, "%s: packet %s found block: %s\n",
-                    __func__, pkt->print(), blk->print());
-            PacketPtr wb_pkt = writecleanBlk(blk, pkt->req->getDest(),
-                                             pkt->id);
-            PacketList writebacks;
-            writebacks.push_back(wb_pkt);
-            doWritebacks(writebacks, 0);
-        }
 
         return false;
     }
@@ -2408,6 +2510,7 @@ BaseCache::CacheStats::regStats()
     blockedCycles.init(NUM_BLOCKED_CAUSES);
     blockedCycles
         .subname(Blocked_NoMSHRs, "no_mshrs")
+        .subname(Blocked_NoWBBuffers, "no_wbuffers")
         .subname(Blocked_NoTargets, "no_targets")
         ;
 
@@ -2415,11 +2518,13 @@ BaseCache::CacheStats::regStats()
     blockedCauses.init(NUM_BLOCKED_CAUSES);
     blockedCauses
         .subname(Blocked_NoMSHRs, "no_mshrs")
+        .subname(Blocked_NoWBBuffers, "no_wbuffers")
         .subname(Blocked_NoTargets, "no_targets")
         ;
 
     avgBlocked
         .subname(Blocked_NoMSHRs, "no_mshrs")
+        .subname(Blocked_NoWBBuffers, "no_wbuffers")
         .subname(Blocked_NoTargets, "no_targets")
         ;
     avgBlocked = blockedCycles / blockedCauses;

@@ -323,6 +323,9 @@ class MSHR : public QueueEntry, public Printable
         return pkt->isClean();
     }
 
+    /** True if any target is a forced PoC flush (CLFLUSH/CLFLUSHOPT/CLWB). */
+    bool hasForcedPoCFlushTarget() const;
+
     bool isPendingModified() const {
         assert(inService); return pendingModified;
     }
@@ -481,8 +484,10 @@ class MSHR : public QueueEntry, public Printable
      */
     void popTarget()
     {
-        DPRINTF(MSHR, "Force deallocating MSHR targets: %s\n",
-                targets.front().pkt->print());
+        if (targets.front().pkt) {
+            DPRINTF(MSHR, "Force deallocating MSHR targets: %s\n",
+                    targets.front().pkt->print());
+        }
         targets.pop_front();
     }
 

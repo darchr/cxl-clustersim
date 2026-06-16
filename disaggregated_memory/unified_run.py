@@ -859,7 +859,15 @@ with open(jobs_json, "w") as outfile:
 # The os needs to move paths as gem5component exists in the SST directory
 os.chdir("ext/sst")
 # check if gem5 process config is set
-sst_config = os.path.join(os.getcwd(), "sst/unified_sst.py") 
+# based on shared memory, use a different sst script that loads the right CXL
+# sst element
+sst_config = None
+if jobs[job]["remote-memory"]["shared"].lower() == "true":
+    sst_config = os.path.join(os.getcwd(), "sst/unified_sst_bi.py")
+else:
+    sst_config = os.path.join(os.getcwd(), "sst/unified_sst.py")
+# sanity check
+assert(sst_config is not None)
 
 # Finally, if we are doing a simulation event up to a certain time, then SST
 # must end the specified time. The JSON config will have this value.

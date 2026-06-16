@@ -96,6 +96,15 @@ class WriteQueue : public Queue<WriteQueueEntry>
      * @param entry The entry to mark in service.
      */
     void markInService(WriteQueueEntry *entry);
+
+    /** Move an entry to the front of the ready list if not in service. */
+    void moveToFront(WriteQueueEntry *entry);
+
+    /**
+     * Return the earliest ready write-queue entry for a forced PoC
+     * WriteClean, or nullptr if none are ready.
+     */
+    WriteQueueEntry *getForcedPoCFlushNext() const;
 };
 
 } // namespace gem5

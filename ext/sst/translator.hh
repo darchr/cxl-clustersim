@@ -165,6 +165,9 @@ inline void
 inplaceSSTRequestToGem5PacketPtr(gem5::PacketPtr pkt,
                                 SST::Interfaces::StandardMem::Request* request)
 {
+    // there is a chance that the incoming request is not paired with a packet
+    // as this is an BISnp
+
     pkt->makeResponse();
 
     // Resolve the success of Store Conditionals
@@ -184,7 +187,13 @@ inplaceSSTRequestToGem5PacketPtr(gem5::PacketPtr pkt,
             );
         }
     }
-
+    else if (SST::Interfaces::StandardMem::WriteResp* test =
+            dynamic_cast<SST::Interfaces::StandardMem::WriteResp*>(request)) {
+            // this is a write resp!
+    }
+    else {
+        assert(false && "unknown packet type!\n");
+    }
     // Clear out bus delay notifications
     pkt->headerDelay = pkt->payloadDelay = 0;
 

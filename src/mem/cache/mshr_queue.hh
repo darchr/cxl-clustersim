@@ -112,6 +112,12 @@ class MSHRQueue : public Queue<MSHR>
     void moveToFront(MSHR *mshr);
 
     /**
+     * Return the earliest ready MSHR that is servicing a forced PoC flush,
+     * or nullptr if none are ready.
+     */
+    MSHR *getForcedPoCFlushNext() const;
+
+    /**
      * Adds a delay to the provided MSHR and moves MSHRs that will be
      * ready earlier than this entry to the top of the list
      *

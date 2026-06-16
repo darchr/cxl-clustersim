@@ -85,4 +85,26 @@ WriteQueue::markInService(WriteQueueEntry *entry)
     deallocate(entry);
 }
 
+void
+WriteQueue::moveToFront(WriteQueueEntry *entry)
+{
+    if (!entry->inService) {
+        readyList.erase(entry->readyIter);
+        entry->readyIter = readyList.insert(readyList.begin(), entry);
+    }
+}
+
+WriteQueueEntry *
+WriteQueue::getForcedPoCFlushNext() const
+{
+    for (WriteQueueEntry *entry : readyList) {
+        PacketPtr pkt = entry->getTarget()->pkt;
+        if (entry->readyTime <= curTick() && pkt->cmd == MemCmd::WriteClean &&
+            pkt->req->isForcedPoCFlush()) {
+            return entry;
+        }
+    }
+    return nullptr;
+}
+
 } // namespace gem5

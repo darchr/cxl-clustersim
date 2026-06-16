@@ -57,6 +57,7 @@
 #include "debug/CacheVerbose.hh"
 #include "enums/Clusivity.hh"
 #include "mem/cache/cache_blk.hh"
+#include "mem/cache/compressors/base.hh"
 #include "mem/cache/mshr.hh"
 #include "mem/cache/tags/base.hh"
 #include "mem/cache/write_queue_entry.hh"
@@ -196,7 +197,11 @@ Cache::doWritebacks(PacketList& writebacks, Tick forward_time)
 
         // Call isCachedAbove for Writebacks, CleanEvicts and
         // WriteCleans to discover if the block is cached above.
-        if (isCachedAbove(wbPkt)) {
+        if (wbPkt->req->isForcedPoCFlush()) {
+            // Always push forced PoC WriteCleans toward memory even if a
+            // mostly_incl parent still holds a copy.
+            allocateWriteBuffer(wbPkt, forward_time);
+        } else if (isCachedAbove(wbPkt)) {
             if (wbPkt->cmd == MemCmd::CleanEvict) {
                 // Delete CleanEvict because cached copies exist above. The
                 // packet destructor will delete the request object because
@@ -356,8 +361,9 @@ Cache::handleTimingReqMiss(PacketPtr pkt, CacheBlk *blk, Tick forward_time,
             // kernel might change the page property before flushing the cache
             // lines. This results in the clflush might occur in an uncacheable
             // region, where the kernel marks a region uncacheable before
-            // flushing. clflush results in a CleanInvalidReq.
-            assert(pkt->isRead() || pkt->isCleanInvalidateRequest());
+            // flushing. clflush/clflushopt/clwb reach here as well.
+            assert(pkt->isRead() || pkt->isCleanInvalidateRequest() ||
+                   (pkt->isClean() && pkt->req->isForcedPoCFlush()));
             allocateMissBuffer(pkt, forward_time);
         }
 
@@ -634,7 +640,7 @@ Cache::handleAtomicReqMiss(PacketPtr pkt, CacheBlk *&blk,
 
                 // write-line request to the cache that promoted
                 // the write to a whole line
-                const bool allocate = allocOnFill(pkt->cmd) &&
+                const bool allocate = allocOnFill(pkt) &&
                     (!writeAllocator || writeAllocator->allocate());
                 blk = handleFill(bus_pkt, blk, writebacks, allocate);
                 assert(blk != NULL);
@@ -645,7 +651,7 @@ Cache::handleAtomicReqMiss(PacketPtr pkt, CacheBlk *&blk,
                 // we're updating cache state to allow us to
                 // satisfy the upstream request from the cache
                 blk = handleFill(bus_pkt, blk, writebacks,
-                                 allocOnFill(pkt->cmd));
+                                 allocOnFill(pkt));
                 satisfyRequest(pkt, blk);
                 maintainClusivity(pkt->fromCache(), blk);
             } else {
@@ -722,6 +728,7 @@ Cache::serviceMSHRTargets(MSHR *mshr, const PacketPtr pkt, CacheBlk *blk)
         // below from generating another response.
         assert(initial_tgt->pkt->cmd == MemCmd::LockedRMWReadReq);
         delete initial_tgt->pkt;
+        initial_tgt->pkt = nullptr;
         mshr->popTarget();
         initial_tgt = nullptr;
     }
@@ -927,7 +934,7 @@ Cache::serviceMSHRTargets(MSHR *mshr, const PacketPtr pkt, CacheBlk *blk)
             // the snooping target will snoop further the cache above with the
             // WriteLineReq.
             assert(!is_invalidate || pkt->cmd == MemCmd::InvalidateResp ||
-                   pkt->req->isCacheMaintenance() ||
+                   pkt->req->isForcedPoCFlush() ||
                    mshr->hasPostInvalidate());
             handleSnoop(tgt_pkt, blk, true, true, mshr->hasPostInvalidate());
             break;
@@ -942,7 +949,11 @@ Cache::serviceMSHRTargets(MSHR *mshr, const PacketPtr pkt, CacheBlk *blk)
     }
 
     if (!mshr->hasLockedRMWReadTarget()) {
-        maintainClusivity(targets.hasFromCache, blk);
+        // Use the response packet, not mshr->getTarget(): targets may already
+        // have been popped by extractServiceableTargets() above.
+        if (!pkt->req->isForcedPoCFlush()) {
+            maintainClusivity(targets.hasFromCache, blk);
+        }
 
         if (blk && blk->isValid()) {
             // an invalidate response stemming from a write line request
@@ -1121,7 +1132,7 @@ Cache::handleSnoop(PacketPtr pkt, CacheBlk *blk, bool is_timing,
             DPRINTF(CacheVerbose, "%s: packet (snoop) %s found block: %s\n",
                     __func__, pkt->print(), blk->print());
             PacketPtr wb_pkt =
-                writecleanBlk(blk, pkt->req->getDest(), pkt->id);
+                writecleanBlk(blk, pkt->req->getDest(), pkt->id, pkt->req);
             PacketList writebacks;
             writebacks.push_back(wb_pkt);
 

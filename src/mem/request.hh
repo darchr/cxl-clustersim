@@ -103,6 +103,7 @@ class Request : public Extensible<Request>
 
     enum : FlagsType
     {
+        // clang-format off
         /**
          * Architecture specific flags.
          *
@@ -168,6 +169,8 @@ class Request : public Extensible<Request>
         EVICT_NEXT                  = 0x04000000,
         /** The request should be marked with ACQUIRE. */
         ACQUIRE                     = 0x00020000,
+        /** The request should be marked with ACQUIRE_PC. */
+        ACQUIRE_PC                  = 0x00002000,
         /** The request should be marked with RELEASE. */
         RELEASE                     = 0x00040000,
 
@@ -259,6 +262,7 @@ class Request : public Extensible<Request>
         /** TLBI_EXT_SYNC_COMP seems to be the largest value
             of FlagsType, so HAS_NO_ADDR's value is that << 1 */
         HAS_NO_ADDR                = 0x0001000000000000,
+        // clang-format on
     };
     static const FlagsType STORE_NO_DATA = CACHE_BLOCK_ZERO |
         CLEAN | INVALIDATE;
@@ -1086,7 +1090,11 @@ class Request : public Extensible<Request>
     Flags getDest() const { return _flags & DST_BITS; }
 
     bool isAcquire() const { return _cacheCoherenceFlags.isSet(ACQUIRE); }
-
+    bool
+    isAcquirePC() const
+    {
+        return _cacheCoherenceFlags.isSet(ACQUIRE_PC);
+    }
 
     /**
      * Accessor functions for the cache bypass flags. The cache bypass
@@ -1127,6 +1135,19 @@ class Request : public Extensible<Request>
     bool isCacheClean() const { return _flags.isSet(CLEAN); }
     bool isCacheInvalidate() const { return _flags.isSet(INVALIDATE); }
     bool isCacheMaintenance() const { return _flags.isSet(CLEAN|INVALIDATE); }
+
+    /**
+     * x86 cache-line flush instructions targeting the point of coherency:
+     * CLFLUSH, CLFLUSHOPT (clean+invalidate), and CLWB (clean only).
+     * Classic caches use this to bypass clusivity and writeback_clean
+     * settings and always propagate the operation toward memory.
+     */
+    bool isForcedPoCFlush() const
+    {
+        if (!isToPOC() || !isCacheClean())
+            return false;
+        return isCacheMaintenance() || !isCacheInvalidate();
+    }
     /** @} */
 
     void

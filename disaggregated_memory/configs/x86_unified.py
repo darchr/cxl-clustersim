@@ -65,6 +65,8 @@ from gem5.components.memory import (
     DualChannelDDR4_2400,
     SingleChannelDDR4_2400,
 )
+
+from gem5.components.cachehierarchies.classic.no_cache import NoCache
 from gem5.components.processors.cpu_types import CPUTypes
 from gem5.components.processors.simple_processor import SimpleProcessor
 from gem5.isas import ISA
@@ -321,6 +323,7 @@ cache_type = {
         l1d_size=args.l1d_size,
         l2_size=args.l2_size,
     ),
+    "nocache": NoCache(),
 }[args.cache_type]
 
 local_mem = {
@@ -339,7 +342,6 @@ remote_memory_range = AddrRange(remote_mem_start, remote_mem_end)
 
 shared_memory = {"true": True, "false": False}[args.remote_memory_shared]
 print("range: ", remote_mem_start, remote_mem_end, shared_memory)
-assert shared_memory == False
 # Check if the cmd is from SST. We ignore it.
 if args.cmd != "":
     print(args.cmd)
@@ -438,6 +440,7 @@ if use_sst == False:
 
     # probably this script is being called only in gem5. Since we are not using
     # the simulator module, we might have to add more m5.simulate()
+    m5.simulate()
     m5.simulate()
     m5.simulate()
     m5.simulate()

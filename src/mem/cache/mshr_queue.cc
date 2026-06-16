@@ -100,6 +100,17 @@ MSHRQueue::moveToFront(MSHR *mshr)
     }
 }
 
+MSHR *
+MSHRQueue::getForcedPoCFlushNext() const
+{
+    for (MSHR *mshr : readyList) {
+        if (mshr->readyTime <= curTick() && mshr->hasForcedPoCFlushTarget()) {
+            return mshr;
+        }
+    }
+    return nullptr;
+}
+
 void
 MSHRQueue::delay(MSHR *mshr, Tick delay_ticks)
 {

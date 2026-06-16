@@ -60,20 +60,16 @@ namespace gem5
 {
 
 MSHR::MSHR(const std::string &name)
-    :   QueueEntry(name),
-        downstreamPending(false),
-        pendingModified(false),
-        postInvalidate(false), postDowngrade(false),
-        wasWholeLineWrite(false), isForward(false),
-        targets(name + ".targets"),
-        deferredTargets(name + ".deferredTargets")
+    : QueueEntry(name), Printable(), downstreamPending(false),
+      pendingModified(false), postInvalidate(false), postDowngrade(false),
+      wasWholeLineWrite(false), isForward(false), readyIter(), allocIter(),
+      targets(name + ".targets"), deferredTargets(name + ".deferredTargets")
 {
 }
 
 MSHR::TargetList::TargetList(const std::string &name)
-    :   Named(name),
-        needsWritable(false), hasUpgrade(false),
-        allocOnFill(false), hasFromCache(false)
+    : Named(name), needsWritable(false), hasUpgrade(false), allocOnFill(false),
+      hasFromCache(false), canMergeWrites(true)
 {}
 
 
@@ -396,8 +392,8 @@ MSHR::allocateTarget(PacketPtr pkt, Tick whenReady, Counter _order,
     //   another read request that will downgrade our writable block
     //   to non-writable (Shared or Owned)
     PacketPtr tgt_pkt = targets.front().pkt;
-    if (pkt->req->isCacheMaintenance() ||
-        tgt_pkt->req->isCacheMaintenance() ||
+    if (pkt->req->isForcedPoCFlush() ||
+        tgt_pkt->req->isForcedPoCFlush() ||
         !deferredTargets.empty() ||
         (inService &&
          (hasPostInvalidate() ||
@@ -429,7 +425,7 @@ MSHR::handleSnoop(PacketPtr pkt, Counter _order)
     // should always be the same, however, this assumes that we never
     // snoop writes as they are currently not marked as invalidations
     panic_if((pkt->needsWritable() != pkt->isInvalidate()) &&
-             !pkt->req->isCacheMaintenance(),
+             !pkt->req->isForcedPoCFlush(),
              "%s got snoop %s where needsWritable, "
              "does not match isInvalidate", name(), pkt->print());
 
@@ -607,7 +603,7 @@ MSHR::promoteDeferredTargets()
     // find the first target that is a cache maintenance request
     auto it = std::find_if(deferredTargets.begin(), deferredTargets.end(),
                            [](MSHR::Target &t) {
-                               return t.pkt->req->isCacheMaintenance();
+                               return t.pkt->req->isForcedPoCFlush();
                            });
     if (it == deferredTargets.begin()) {
         // if the first deferred target is a cache maintenance packet
@@ -719,6 +715,22 @@ MSHR::trySatisfyFunctional(PacketPtr pkt)
         return (targets.trySatisfyFunctional(pkt) ||
                 deferredTargets.trySatisfyFunctional(pkt));
     }
+}
+
+bool
+MSHR::hasForcedPoCFlushTarget() const
+{
+    for (const auto &target : targets) {
+        if (target.pkt->req->isForcedPoCFlush()) {
+            return true;
+        }
+    }
+    for (const auto &target : deferredTargets) {
+        if (target.pkt->req->isForcedPoCFlush()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool

@@ -122,7 +122,7 @@ ExternalMemory::sendTimingResp(gem5::PacketPtr pkt)
 
         // delete this entry to save some memory.
         outstanding_requests.erase(pkt);
-       
+
         // Count this packet as an incoming packet.
         ++stats.numIncomingPackets;
 
@@ -135,7 +135,7 @@ ExternalMemory::sendTimingResp(gem5::PacketPtr pkt)
         }
         else {
             ++stats.numWriteIncomingPackets;
-            assert(false && "Should only see read responses!");
+            // assert(false && "Should only see read responses!");
         }
     }
     return return_status;
@@ -144,6 +144,10 @@ ExternalMemory::sendTimingResp(gem5::PacketPtr pkt)
 void
 ExternalMemory::sendTimingSnoopReq(gem5::PacketPtr pkt)
 {
+    // SST back-invalidates arrive as timing snoops on the memory port; the
+    // coherent crossbar only accepts express snoops on this path.
+    if (!pkt->isExpressSnoop())
+        pkt->setExpressSnoop();
     outgoingPort.sendTimingSnoopReq(pkt);
 }
 

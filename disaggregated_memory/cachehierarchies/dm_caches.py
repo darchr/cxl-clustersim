@@ -87,8 +87,7 @@ class ClassicPrivateL1PrivateL2SharedL3DMCache(
             L2XBar() for i in range(board.get_processor().get_num_cores())
         ]
         self.l2caches = [
-            L2Cache(size=self._l2_size,
-                    writeback_clean=True)
+            L2Cache(size=self._l2_size)
             for i in range(board.get_processor().get_num_cores())
         ]
 
@@ -100,7 +99,6 @@ class ClassicPrivateL1PrivateL2SharedL3DMCache(
             response_latency=self._l3_response_latency,
             mshrs=self._l3_mshrs,
             tgts_per_mshr=self._l3_tgts_per_mshr,
-            writeback_clean=False
         )
         self.l3cache.write_buffers = 16
         # self.l3cache.clusivity = "mostly_incl"

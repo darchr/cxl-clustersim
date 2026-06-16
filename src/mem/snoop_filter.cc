@@ -224,7 +224,7 @@ SnoopFilter::lookupSnoop(const Packet* cpkt)
     // caches down to the specified point of reference.
     assert(cpkt->isWriteback() || cpkt->req->isUncacheable() ||
            (cpkt->isInvalidate() == cpkt->needsWritable()) ||
-           cpkt->req->isCacheMaintenance());
+           cpkt->req->isForcedPoCFlush());
     if (cpkt->isInvalidate() && sf_item.requested.none()) {
         // Early clear of the holder, if no other request is currently going on
         // @todo: This should possibly be updated even though we do not filter
@@ -371,9 +371,9 @@ SnoopFilter::updateResponse(const Packet* cpkt, const ResponsePort&
     sf_item.requested &= ~response_mask;
     // Update the residency of the cache line.
 
-    if (cpkt->req->isCacheMaintenance()) {
-        // A cache clean response does not carry any data so it
-        // shouldn't change the holders, unless it is invalidating.
+    if (cpkt->req->isForcedPoCFlush()) {
+        // A forced PoC flush response does not carry data. Invalidate
+        // responses clear the holder; clean-only (CLWB) responses keep it.
         if (cpkt->isInvalidate()) {
             sf_item.holder &= ~response_mask;
         }
