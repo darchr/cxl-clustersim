@@ -8,19 +8,25 @@ installed.
 
 ## SST-Core
 
+```sh
+# Navigate to the sst folder
+cd ext/sst
+export SST_CORE_HOME=`pwd`
+```
+
 ### Downloading the SST-Core Source Code
 
 ```sh
-https://github.com/sstsimulator/sst-core/releases/download/v15.0.0_Final/sstcore-15.0.0.tar.gz
+wget https://github.com/sstsimulator/sst-core/releases/download/v15.0.0_Final/sstcore-15.0.0.tar.gz
 tar xzf sstcore-15.0.0.tar.gz
 ```
 
 ### Installing SST-Core
 
 ```sh
-cd sstcore-15.0.0
-./configure --prefix=$SST_CORE_HOME --with-python=/usr/bin/python3-config \
-            --disable-mpi # optional, used when MPI is not available.
+cd sst-core-15.0.0
+# Make sure your system supports MPI
+./configure --prefix=$SST_CORE_HOME --with-python=/usr/bin/python3-config
 make all -j$(nproc)
 make install
 ```
@@ -36,7 +42,7 @@ export PATH=$SST_CORE_HOME/bin:$PATH
 ### Downloading the SST-Elements Source Code
 
 ```sh
-https://github.com/kaustav-goswami/sst-elements.git
+git clone https://github.com/kaustav-goswami/sst-elements.git
 # make sure to use the correct branch
 cd sst-elements
 checkout cxl-bi
@@ -66,11 +72,11 @@ At the root of the gem5 folder, you need to compile gem5 as a library. This
 varies  dependent on which OS you are using. If you're using Linux, then
 execute the following:
 ```sh
-scons build/RISCV/libgem5_opt.so -j $(nproc) --without-tcmalloc --duplicate-sources
+scons build/ALL/libgem5_opt.so -j $(nproc) --without-tcmalloc --duplicate-sources
 ```
 In case you're using Mac, then type the following:
 ```sh
-scons build/RISCV/libgem5_opt.dylib -j $(nproc) --without-tcmalloc --duplicate-sources
+scons build/ALL/libgem5_opt.dylib -j $(nproc) --without-tcmalloc --duplicate-sources
 ```
 
 **Note:**
@@ -88,7 +94,8 @@ Depending on your OS, you need to copy the correct `Makefile.xxx` file to
 `Makefile`.
 ```sh
 cp Makefile.xxx Makefile    # linux or mac
-make -j4
+# CXL-ClusterSim works with gem5_ALL
+make ARCH=ALL -j4
 ```
 The make file is hardcoded to RISC-V. IN the case you wish to compile to ARM,
 edit the Makefile or pass `ARCH=RISCV` to `ARCH=ARM` while compiling.
