@@ -24,7 +24,7 @@ tar xzf sstcore-15.0.0.tar.gz
 ### Installing SST-Core
 
 ```sh
-cd sst-core-15.0.0
+cd sst-core
 # Make sure your system supports MPI
 ./configure --prefix=$SST_CORE_HOME --with-python=/usr/bin/python3-config
 make all -j$(nproc)
