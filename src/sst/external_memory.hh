@@ -194,6 +194,27 @@ class ExternalMemory : public memory::AbstractMemory
 
     // A variable is needed to tell gem5 whether to use SST or not.
     bool useSSTSim;
+
+    // Host-side CXL credit-based flow control (see enable_backpressure /
+    // max_outstanding_requests params, and handleTiming()/
+    // releaseOutstandingCredit() for the actual logic). Modeled on
+    // mem/simple_mem.cc's busy/retryReq pattern: outstandingRequests is
+    // only incremented for packets that need a response (posted writes
+    // never get a completion event to release a credit on, so they never
+    // consume one -- see handleTiming()), and needRetry records that we
+    // have to call outgoingPort.sendRetryReq() once a credit next frees
+    // up, since the ResponsePort contract leaves the refused packet
+    // owned by the sender, not us.
+    bool enableBackpressure;
+    unsigned int maxOutstandingRequests;
+    unsigned int outstandingRequests;
+    bool needRetry;
+
+    // Releases one outstanding-request credit (called from
+    // sendTimingResp() once a response has actually been delivered
+    // upstream) and, if a request was previously refused for lack of
+    // credit, signals the sender to retry it.
+    void releaseOutstandingCredit();
 };
 
 } // namespace gem5

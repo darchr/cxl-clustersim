@@ -104,8 +104,8 @@ cache_hierarchy = ClassicPrivateL1PrivateL2DMCache(
 # )
 # Memory: Dual Channel DDR4 2400 DRAM device. The local memory for the X86
 # board cannot be > 3 GiB because of the I/O hole.
-local_memory = SingleChannelDDR4_2400(size="2GiB")
-remote_memory = SingleChannelDDR4_2400(size="2GiB")
+local_memory = SingleChannelDDR4_2400(size="64MiB")
+remote_memory = SingleChannelDDR4_2400(size="1GiB")
 # local_memory = SingleChannelSimpleMemory(size="2GiB", latency="50ns",
 #                                          latency_var="1ns", bandwidth="16GB/s" )
 
@@ -142,7 +142,7 @@ cmd = [
     "numastat;",
     "numactl --hardware;",
     "sleep 10;",
-    "numactl --membind=1 -- /home/gem5/stream;",
+    "numactl --preferred=1 -- /home/gem5/simple-vectorizable-microbenchmarks/stream-syscalls/stream.hw.m5 16777216;",
     "m5 exit;",
     # "bin/bash"
 ]
@@ -174,12 +174,13 @@ board.set_kernel_disk_workload(
     #     "/home/kaustavg/.cache/gem5/x86-npb"
     # ),
     disk_image=DiskImageResource(
-        "/home/kaustavg/projects/kg-resources-2/src/shared-gapbs/x86-disk-image-24-04/x86-ubuntu",
+        "/home/kaustavg/projects/kg-resources-2/src/shared-memcached/x86-disk-image-24-04/x86-ubuntu",
         root_partition="2",
     ),
     readfile_contents=" ".join(cmd),
 )
-# This script will boot two numa nodes in a full system simulation where the
+board.exit_on_work_items = False
+# This script willboot two numa nodes in a full system simulation where the
 # gem5 node will be sending instructions to the SST node. the simulation will
 # after displaying numastat information on the terminal, whjic can be viewed
 # from board.terminal.
@@ -198,4 +199,5 @@ m5.simulate()
 m5.simulate()
 m5.simulate()
 processor.switch()
+m5.simulate()
 m5.simulate()

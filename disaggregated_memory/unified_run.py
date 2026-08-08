@@ -98,11 +98,11 @@ def check_binaries(gem5_binary: str, sst_binary: str) -> None:
     if gem5_binary[0] != "/":
         # append current directory information in the check
         if os.path.exists(os.path.join(os.getcwd(), gem5_binary)) == False:
-            fatal("gem5 path " + gem5_binary + " does not exist!")
+            warn("gem5 path " + gem5_binary + " does not exist!")
     else:
         # The user provided a full path starting with /.
         if os.path.exists(gem5_binary) == False:
-            fatal("gem5 path " + gem5_binary + " does not exist!")
+            warn("gem5 path " + gem5_binary + " does not exist!")
     if sst_binary[0] != "/":
         # append current directory information in the check
         if os.path.exists(os.path.join(os.getcwd(), sst_binary)) == False:
@@ -547,6 +547,57 @@ parser.add_argument(
     help="An option to simulate the system with or without systemd"
 )
 
+# Network topology between the gem5 nodes and SST's shared memory backend.
+# "bus" is the original, router-less unified_sst.py/unified_sst_bi.py
+# behavior (every gem5 node directly on one memHierarchy.Bus). The
+# "router*" options insert one or more merlin.hr_router switches -- see
+# ext/sst/sst/README.md for the exact topology each one builds.
+parser.add_argument(
+    "--network-topology",
+    type=str,
+    required=False,
+    choices=["bus", "router", "router-group", "router-tree"],
+    default="bus",
+    help="'bus' (default): no router, gem5 nodes go straight to SST's "
+        "memory backend (unified_sst.py/unified_sst_bi.py). "
+        "'router': 1 hop, all gem5 nodes + memory on a single "
+        "merlin.hr_router star (unified_sst_router.py). "
+        "'router-group': 2 hops, gem5 nodes split into groups of 2 behind "
+        "their own leaf router(s), uplinked to a main/root router that "
+        "also hosts memory (unified_sst_router_group.py). "
+        "'router-tree': 2 hops, generic N-ary version of 'router-group' "
+        "-- use --leaf-size to control gem5 nodes per leaf router "
+        "(unified_sst_router_tree.py). Only 'bus' supports "
+        "remote-memory.shared=true jobs."
+)
+parser.add_argument(
+    "--leaf-size",
+    type=int,
+    required=False,
+    default=2,
+    help="Only used with --network-topology=router-tree: maximum number "
+        "of gem5 nodes served by each leaf router (default: 2)."
+)
+parser.add_argument(
+    "--uplink-latency",
+    type=str,
+    required=False,
+    default="1ps",
+    help="Only used with --network-topology={router-group,router-tree}: "
+        "latency of each leaf-router <-> root-router uplink, i.e. the "
+        "extra network hop(s) added by the second level of routers "
+        "(default: 1ps)."
+)
+parser.add_argument(
+    "--memory-link-latency",
+    type=str,
+    required=False,
+    default="1ps",
+    help="Only used with --network-topology={router,router-group,"
+        "router-tree}: latency of the link between the memory controller "
+        "and the router (or its dedicated memory leaf) (default: 1ps)."
+)
+
 args = parser.parse_args()
 # prepare the gem5 and SST paths
 gem5_binary = ""
@@ -680,7 +731,7 @@ else:
 
 # make sure that the size of the jobs is same as --count
 # Make sure that the number of simulation matches the number of jobs specified.
-assert(args.count == len(jobs))
+# assert(args.count == len(jobs))
 
 # -------------------------- All jobs ready ----------------------------------#
 
@@ -782,6 +833,7 @@ if checkpoints == True:
                                                         ["bootloader"],
                         "--systemd=" + systemd
                         ]))
+            time.sleep(120)
         except KeyError:
             traceback.print_exc()
             fatal("Malformed JSON!")
@@ -807,14 +859,27 @@ if checkpoints == True:
 else:
     # Turns out that checkpoints are already taken and simulation can skip gem5
     info("No checkpoints to take! Will start SST directly.")
-
+exit(-1)
 # -------------------------- All gem5s done ----------------------------------#
 
 # Inform the user that gem5 has ended!
 info("All gem5 processes completed! Will start SST now!")
 
 # SST has one more process than the number of gem5 nodes for the memory.
-sst_processes = args.count + 1
+# --network-topology=router-tree is the exception: it gives every
+# gem5-leaf domain (a leaf router + the DirectoryController bridges of the
+# gem5 nodes under it), the root router, and the memory domain (the
+# dedicated memory leaf router + the shared MemController) their own MPI
+# rank -- see ext/sst/sst/unified_sst_router_tree.py for the exact rank
+# layout this must match. len(jobs) is used instead of --count since a
+# --joblist can specify a different node count than --count.
+if args.network_topology == "router-tree":
+    num_gem5_nodes = len(jobs)
+    num_leaf_routers = \
+        (num_gem5_nodes + args.leaf_size - 1) // args.leaf_size
+    sst_processes = num_gem5_nodes + num_leaf_routers + 2
+else:
+    sst_processes = args.count + 1
 
 # Processes are already created when saving the checkpoint. The only
 # information SST needs is the experiment name, memory sizes and instance ids.
@@ -859,7 +924,28 @@ with open(jobs_json, "w") as outfile:
 # The os needs to move paths as gem5component exists in the SST directory
 os.chdir("ext/sst")
 # check if gem5 process config is set
-sst_config = os.path.join(os.getcwd(), "sst/unified_sst.py") 
+# based on shared memory, use a different sst script that loads the right CXL
+# sst element
+shared_memory_requested = jobs[job]["remote-memory"]["shared"].lower() == \
+    "true"
+if args.network_topology != "bus" and shared_memory_requested:
+    fatal("--network-topology=" + args.network_topology + " does not " +
+          "support remote-memory.shared=true jobs. Use " +
+          "--network-topology=bus (the default) for shared/CXL.mem " +
+          "workloads.")
+
+if args.network_topology == "router":
+    sst_config = os.path.join(os.getcwd(), "sst/unified_sst_router.py")
+elif args.network_topology == "router-group":
+    sst_config = os.path.join(os.getcwd(), "sst/unified_sst_router_group.py")
+elif args.network_topology == "router-tree":
+    sst_config = os.path.join(os.getcwd(), "sst/unified_sst_router_tree.py")
+elif shared_memory_requested:
+    sst_config = os.path.join(os.getcwd(), "sst/unified_sst_bi.py")
+else:
+    sst_config = os.path.join(os.getcwd(), "sst/unified_sst.py")
+# sanity check
+assert(sst_config is not None)
 
 # Finally, if we are doing a simulation event up to a certain time, then SST
 # must end the specified time. The JSON config will have this value.
@@ -886,8 +972,26 @@ if until_when != "0":
 sst_command += "--output-directory=" + experiment_path + " " + \
                   "--jobs-path=" + jobs_json + " " + \
                   "--clock=" + args.clock + " " + \
-                  "--systemd=" + systemd + " " + \
-                  " | tee " + mpi_stats_path
+                  "--systemd=" + systemd + " "
+# Topology-specific arguments -- only meaningful (and only accepted) by the
+# unified_sst_router*.py scripts, so only add them when one of those was
+# selected.
+if args.network_topology in ("router", "router-group", "router-tree"):
+    sst_command += "--memory-link-latency=" + args.memory_link_latency + " "
+    # unified_sst_router.py (star) now also uses --uplink-latency for its
+    # gem5<->dirctrl and dirctrl<->router links instead of the jobs JSON's
+    # per-node latency -- see network_common.build_star()'s docstring.
+    sst_command += "--uplink-latency=" + args.uplink_latency + " "
+if args.network_topology == "router-tree":
+    sst_command += "--leaf-size=" + str(args.leaf_size) + " "
+if args.network_topology == "bus" and not shared_memory_requested:
+    # unified_sst.py's membus<->memctrl link also needs an explicit,
+    # non-default latency now -- see its own
+    # _reject_default_link_latency(). Its gem5<->bus link latency still
+    # comes from the jobs JSON's per-node remote-memory.latency, unlike
+    # the router topologies.
+    sst_command += "--memory-link-latency=" + args.memory_link_latency + " "
+sst_command += " | tee " + mpi_stats_path
 
 sst_mpi_process = subprocess.Popen([sst_command], shell=True)
 

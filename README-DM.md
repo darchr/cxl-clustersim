@@ -341,20 +341,98 @@ Note that gem5 only setup does not support KVM, therefore we booted the systems 
 We only compare the ROI times for a fair comparison.
 Also SST supports one additional process on a different core which is absent in gem5.
 
-#### gem5-only infrastructure and experiments
+### Case Study II - Allocators and Networks
 
-##### Building the gem5-only infrastructure
-
-##### Running the experiments
-
-#### gem5 + SST infrastructure and experiments
-
+The disk image for the allocators can be created via:
 ```sh
-
-
+git clone git@github.com:kaustav-goswami/gem5-resources
+cd gem5-resources
+git checkout disaggregated
+cd src
+cd stream
+./build-x86.sh 24.04
+# artifacts will be created in the disk-images folder
 ```
 
-### Case Study II - NPB 
+Once the kernel and the disk image paths are set correctly in the joblist, the following commands can be used to start the simulation:
+
+#### Direct Link
+
+```sh
+python3 disaggregated_memory/unified_run.py \
+    --count=4 --exp-name stream-numa-preferred \
+    --joblist disaggregated_memory/joblist/case-study-3/stream_numa_preferred.json
+python3 disaggregated_memory/unified_run.py \
+    --count=4 --exp-name stream-numa-auto \
+    --joblist disaggregated_memory/joblist/case-study-3/stream_numa_auto.json
+python3 disaggregated_memory/unified_run.py \
+    --count=4 --exp-name stream-jemalloc \
+    --joblist disaggregated_memory/joblist/case-study-3/stream_jemalloc.json
+python3 disaggregated_memory/unified_run.py \
+    --count=4 --exp-name stream-tcmalloc \
+    --joblist disaggregated_memory/joblist/case-study-3/stream_tcmalloc.json
+```
+
+#### Star Topology
+
+```sh
+python3 disaggregated_memory/unified_run.py \
+    --count=4 --exp-name stream-numa-preferred-star \
+    --joblist disaggregated_memory/joblist/case-study-3/stream_numa_preferred.json \
+    --network-topology=router \
+    --memory-link-latency=50ns \
+    --uplink-latency=100ns
+python3 disaggregated_memory/unified_run.py \
+    --count=4 --exp-name stream-numa-auto-star \
+    --joblist disaggregated_memory/joblist/case-study-3/stream_numa_auto.json \
+    --network-topology=router \
+    --memory-link-latency=50ns \
+    --uplink-latency=100ns
+python3 disaggregated_memory/unified_run.py \
+    --count=4 --exp-name stream-jemalloc-star \
+    --joblist disaggregated_memory/joblist/case-study-3/stream_jemalloc.json \
+    --network-topology=router \
+    --memory-link-latency=50ns \
+    --uplink-latency=100ns
+python3 disaggregated_memory/unified_run.py \
+    --count=4 --exp-name stream-tcmalloc-star \
+    --joblist disaggregated_memory/joblist/case-study-3/stream_tcmalloc.json \
+    --network-topology=router \
+    --memory-link-latency=50ns \
+    --uplink-latency=100ns
+```
+
+#### Tree Topology
+
+```sh
+python3 disaggregated_memory/unified_run.py \
+    --count=4 --exp-name stream-numa-preferred-tree \
+    --joblist disaggregated_memory/joblist/case-study-3/stream_numa_preferred.json \
+    --network-topology=router-tree \
+    --memory-link-latency=50ns \
+    --uplink-latency=100ns
+python3 disaggregated_memory/unified_run.py \
+    --count=4 --exp-name stream-numa-auto-tree \
+    --joblist disaggregated_memory/joblist/case-study-3/stream_numa_auto.json \
+    --network-topology=router-tree \
+    --memory-link-latency=50ns \
+    --uplink-latency=100ns
+python3 disaggregated_memory/unified_run.py \
+    --count=4 --exp-name stream-jemalloc-tree \
+    --joblist disaggregated_memory/joblist/case-study-3/stream_jemalloc.json \
+    --network-topology=router-tree \
+    --memory-link-latency=50ns \
+    --uplink-latency=100ns
+python3 disaggregated_memory/unified_run.py \
+    --count=4 --exp-name stream-tcmalloc-tree \
+    --joblist disaggregated_memory/joblist/case-study-3/stream_tcmalloc.json \
+    --network-topology=router-tree \
+    --memory-link-latency=50ns \
+    --uplink-latency=100ns
+```
+
+
+### Case Study III - NPB 
 
 The paper simulates the first 500ms of NPB benchmarks of all the 7 NPB benchmarks.
 The latency with 
@@ -362,7 +440,68 @@ There is a IPC analysis with the generated data:
 ```sh
 python3 disaggregated_memory/unified_run.py --count=7 --exp-name=exp-case-study-npb --joblist=disaggregated_memory/joblist/case-study-1/170ns/joblist_stream_remote_4_nodes.json --systemd=True
 ```
-## Taking Checkpoints
+
+### Case Study IV - GAPBS
+
+
+We do not have a lot of shared memory workloads as of today.
+Disaggregated shared memory workloads is an active research topic (e.g. [Tigon](https://www.usenix.org/conference/osdi25/presentation/huang-yibo)).
+We use the same foundation laid by [FAMFS](https://github.com/cxl-micron-reskit/famfs) of using `/dev/dax` to enable physical address range sharing across hosts.
+
+The shared memory programming model is another research topic.
+A simple single writer multiple reader for shared CXL memory is the easiest way to create such workloads.
+Such workloads are memory-decoupled. 
+For instance, GAPBS, a popular graph processing benchmark, can be extended to share a graph across multiple hosts , where each host executes a different graph kernel (i.e. BFS) on the same graph.
+Similarly, memcached can be reconfigured to store both keys (yes, its slow) and the values on the shared memory such that multiple hosts can querry the same database.
+ML workloads can also share the weights across hosts running inference on the same model and these weights are usually not updated.
+I am working on a practical way to easily identify and create memory-decoupled workloads from existing workloads.
+
+On the other hand, compute-decoupled workloads, where parts of the workload are distributed across hosts is a difficult performance problem to solve.
+Disaggregated memory does not use RPC to find a variable on the remote memory as there is no compute logic on the remote memory node.
+It uses LD/ST instructions directly to save time (1000x).
+The infrastrcuture currently supports software-based coherence with `clwb` and `clflush` instructions, enabling the exploration of multiple writer multiple reader workloads without any consistency guarantees.
+
+Relevant resources include:
+1. [shared-memcached](https://github.com/kaustav-goswami/shared-memcached)
+2. [YCSB](https://github.com/kaustav-goswami/YCSB)
+3. [gem5 resources](https://github.com/kaustav-goswami/gem5-resources); branch: disaggregated
+
+## Building resources
+
+For simplicity, we demonstrate a single writer host and multiple reader hosts programming model where a host allocates a graph in the shared memory and the rest of the hosts run a graph kernel from GAPBS.
+We used a special version of [GAPBS](https://github.com/darchr/shared-gapbs) that enables graph sharing between weighted and unweighted graphs.
+
+Prepare the workload by building the gem5 resources:
+```sh
+git clone git@github.com:kaustav-goswami/gem5-resources
+cd gem5-resources
+git checkout disaggregated
+cd src
+cd shared-gapbs
+./build-x86.sh 24.04
+# artifacts will be created in the disk-images folder
+
+cd ..
+cd kernels
+# see README.md on how to build the kernel
+git clone https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
+cd linux
+git checkout v6.9.9 # maybe
+cp ../linux-configs/config.x86.6.9.9 .config
+make -j`nproc`
+
+```
+
+Use these resources on your simulation script.
+
+## Running examples
+
+To run this example from the repository:
+```sh
+python3 disaggregated_memory/unified_run.py --count=8 --exp-name=gapbs-shared-170ns --joblist disaggregated_memory/joblist/shared-gapbs/base-170ns.json
+python3 disaggregated_memory/unified_run.py --count=8 --exp-name=gapbs-shared-250ns --joblist disaggregated_memory/joblist/shared-gapbs/base-250ns.json
+```
+## Internal Working: Taking Checkpoints
 
 This section explains the underlying design behind enabling checkpoints in gem5 + SST. 
 
@@ -404,7 +543,7 @@ also we haven't reached the ROI.
 
 This marks the end of phase 1.
 
-## Restoring Checkpoints
+## Internal Working: Restoring Checkpoints
 
 The restoring of checkpoints marks the beginning of phase 2. The simulation now
 needs to be initiated in SST. The SST-side script can be found in

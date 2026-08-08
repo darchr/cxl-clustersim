@@ -111,7 +111,7 @@ class ExternalRemoteMemory(AbstractMemorySystem):
             self.outgoing_request_bridge.node_index = 0
         else:
             self.outgoing_request_bridge.node_index = host_id
-
+        self.outgoing_request_bridge.enable_backpressure = True
         # Indicate whether the user is using SST or not.
         self.outgoing_request_bridge.use_sst_sim = use_sst_sim
 

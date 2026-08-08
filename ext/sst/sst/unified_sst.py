@@ -91,6 +91,16 @@ parser.add_argument(
     required=False,
     help="Tell SST how long to run. SST passes this to gem5."
 )
+
+parser.add_argument(
+    "--memory-link-latency",
+    type=str,
+    required=False,
+    default="1ps",
+    help="Latency of the link between the shared memHierarchy.Bus and "
+        "the MemController (default: 1ps). Required in practice -- see "
+        "_reject_default_link_latency()."
+)
 # parse the args!
 args = parser.parse_args()
 
@@ -98,12 +108,37 @@ args = parser.parse_args()
 
 # Use a utility function for better understanding of the SST connections. It
 # gets fairly complicated once a large number of components are connected!
+def _reject_default_link_latency(link_name, latency):
+    """cache_link_latency ("1ps") only exists as a fallback default value
+    for latency arguments -- it must never actually be used to build a
+    link. SST's cross-rank synchronization interval (min_part, in
+    sst-core's main.cc) is set by the *smallest* latency of any link that
+    crosses an MPI rank boundary, and gem5 nodes here each get their own
+    rank (see gem5_nodes[node].setRank() below), so a single
+    un-overridden 1ps default anywhere in the graph silently forces the
+    entire simulation to synchronize every 1ps of simulated time --
+    effectively serializing what should be a parallel run, with no error
+    or warning to explain why. Fail loudly here instead: if this fires,
+    it means a required latency argument (the jobs JSON's per-node
+    "remote-memory.latency", or --memory-link-latency) was left at its
+    default instead of being explicitly set. Mirrors
+    network_common._reject_default_link_latency().
+    """
+    if UnitAlgebra(latency) == UnitAlgebra(cache_link_latency):
+        print(f"fatal: link '{link_name}' would be built with the "
+              f"default {cache_link_latency} latency. This almost "
+              "certainly means a required latency argument (the jobs "
+              "JSON's remote-memory.latency, or --memory-link-latency) "
+              "was left unset. Pass an explicit, non-default latency "
+              "instead.")
+        exit(-1)
+
 def connect_components(link_name: str,
                        low_port_name: str, low_port_idx: int,
                        high_port_name: str, high_port_idx: int,
-                       remote_memory_latency: str = None,
-                       port = False, direct_link = False,
-                       latency = False) -> None:
+                       latency: str,
+                       port = False, direct_link = False) -> None:
+    _reject_default_link_latency(link_name, latency)
     link = sst.Link(link_name)
     low_port = "low_network_" + str(low_port_idx)
     if port == True:
@@ -111,18 +146,10 @@ def connect_components(link_name: str,
     high_port = "high_network_" + str(high_port_idx)
     if direct_link == True:
         high_port = "direct_link"
-    if latency == False:
-        link.connect(
-            (low_port_name, low_port, cache_link_latency),
-            (high_port_name, high_port, cache_link_latency)
-        )
-    else:
-        assert (latency == True)
-        assert (remote_memory_latency != None)
-        link.connect(
-            (low_port_name, low_port, cache_link_latency),
-            (high_port_name, high_port, remote_memory_latency)
-        )
+    link.connect(
+        (low_port_name, low_port, latency),
+        (high_port_name, high_port, latency)
+    )
 
 def get_address_range(node, local_mem_size, remote_mem_size, blank_mem_size):
     """
@@ -368,13 +395,11 @@ for node in range(system_nodes):
     # we dont need directory controllers in this example case. The start and
     # end ranges does not really matter as the OS is doing this management in
     # in this case.
-    # TODO: Figure out if we need to add the link latency here?
-    print(jobs[job]["remote-memory"]["latency"])
     connect_components(f"node_{node}_mem_port_2_mem_bus",
                 memory_ports[node], 0,
                 mem_bus, node,
-                remote_memory_latency=jobs[job]["remote-memory"]["latency"],
-                port = True, latency = True)
+                latency=jobs[job]["remote-memory"]["latency"],
+                port = True)
     
 # All system nodes are setup. Now create a SST memory. Keep it simplemem for
 # avoiding extra simulation time. There is only one memory node in SST's side.
@@ -383,12 +408,14 @@ for node in range(system_nodes):
 connect_components("membus_2_memory",
                    mem_bus, 0,
                    memctrl, 0,
+                   latency=args.memory_link_latency,
                    direct_link = True)
 
 # enable Statistics for SST. The output of the SST's component will be stored
 # in the sst-output.txt file in the experiemnt directory.
 stat_params = { "rate" : "0ns" }
-sst.setStatisticLoadLevel(10)
+# We don;t need SST stats rn
+sst.setStatisticLoadLevel(1)
 # Save the output of SST in the output directory
 sst.setStatisticOutput("sst.statOutputTXT",
         {"filepath" : output_directory + "/sst-output.txt"})

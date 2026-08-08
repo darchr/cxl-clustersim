@@ -1,0 +1,178 @@
+{
+    "0": {
+        "metadata": {
+            "comment": "This is a simple host that runs STREAM local preferred. The node uses kvm to ff the simulation w/ systemd.",
+            "experiment": "stream-numa-preferred-4-nodes",
+            "checkpoint": "",
+            "maxinsts": ""
+        },
+        "cpu": {
+            "ff-core": "kvm",
+            "roi-core": "o3",
+            "isa": "x86",
+            "count": "8"
+        },
+        "cache": {
+            "type": "l1l2l3",
+            "l1i-size": "32KiB",
+            "l1d-size": "32KiB",
+            "l2-size": "512KiB",
+            "l3-size": "8MiB",
+            "l3-assoc": "16"
+        },
+        "local-memory": {
+            "type": "ddr4",
+            "size": "64MiB"
+        },
+        "remote-memory": {
+            "size": "",
+            "shared": "false",
+            "latency": "170ns",
+            "start": "0x180000000",
+            "end": "0x1C0000000"
+        },
+        "workitem": {
+            "cmd": ["echo \"exp: starting STREAM remotely!\"\n",
+                    "numastat;",
+                    "numactl --hardware;",
+                    "/home/gem5/simple-vectorizable-microbenchmarks/stream-tcmalloc/stream.hw.m5 8388608;",
+                    "numastat;",
+                    "m5 exit;"],
+            "disk": "/home/kaustavg/projects/kg-resources-2/src/shared-memcached/x86-disk-image-24-04/x86-ubuntu",
+            "kernel": "/home/kaustavg/kernel/x86/linux-6.9.9/vmlinux",
+            "bootloader": ""
+        }
+    },
+    "1": {
+        "metadata": {
+            "comment": "This is a simple host that runs STREAM local preferred. The node uses kvm to ff the simulation w/ systemd.",
+            "experiment": "stream-numa-preferred-4-nodes",
+            "checkpoint": "",
+            "maxinsts": ""
+        },
+        "cpu": {
+            "ff-core": "kvm",
+            "roi-core": "o3",
+            "isa": "x86",
+            "count": "8"
+        },
+        "cache": {
+            "type": "l1l2l3",
+            "l1i-size": "32KiB",
+            "l1d-size": "32KiB",
+            "l2-size": "512KiB",
+            "l3-size": "8MiB",
+            "l3-assoc": "16"
+        },
+        "local-memory": {
+            "type": "ddr4",
+            "size": "64MiB"
+        },
+        "remote-memory": {
+            "size": "",
+            "shared": "false",
+            "latency": "170ns",
+            "start": "0x1C0000000",
+            "end": "0x200000000"
+        },
+        "workitem": {
+            "cmd": ["echo \"exp: starting STREAM remotely!\"\n",
+                    "numastat;",
+                    "numactl --hardware;",
+                    "/home/gem5/simple-vectorizable-microbenchmarks/stream-tcmalloc/stream.hw.m5 8388608;",
+                    "numastat;",
+                    "m5 exit;"],
+            "disk": "/home/kaustavg/projects/kg-resources-2/src/shared-memcached/x86-disk-image-24-04/x86-ubuntu",
+            "kernel": "/home/kaustavg/kernel/x86/linux-6.9.9/vmlinux",
+            "bootloader": ""
+        }
+    },
+    "2": {
+        "metadata": {
+            "comment": "This is a simple host that runs STREAM local preferred. The node uses kvm to ff the simulation w/ systemd.",
+            "experiment": "stream-numa-preferred-4-nodes",
+            "checkpoint": "",
+            "maxinsts": ""
+        },
+        "cpu": {
+            "ff-core": "kvm",
+            "roi-core": "o3",
+            "isa": "x86",
+            "count": "8"
+        },
+        "cache": {
+            "type": "l1l2l3",
+            "l1i-size": "32KiB",
+            "l1d-size": "32KiB",
+            "l2-size": "512KiB",
+            "l3-size": "8MiB",
+            "l3-assoc": "16"
+        },
+        "local-memory": {
+            "type": "ddr4",
+            "size": "64MiB"
+        },
+        "remote-memory": {
+            "size": "",
+            "shared": "false",
+            "latency": "170ns",
+            "start": "0x200000000",
+            "end": "0x240000000"
+        },
+        "workitem": {
+            "cmd": ["echo \"exp: starting STREAM remotely!\"\n",
+                    "numastat;",
+                    "numactl --hardware;",
+                    "/home/gem5/simple-vectorizable-microbenchmarks/stream-tcmalloc/stream.hw.m5 8388608;",
+                    "numastat;",
+                    "m5 exit;"],
+            "disk": "/home/kaustavg/projects/kg-resources-2/src/shared-memcached/x86-disk-image-24-04/x86-ubuntu",
+            "kernel": "/home/kaustavg/kernel/x86/linux-6.9.9/vmlinux",
+            "bootloader": ""
+        }
+    },
+    "3": {
+        "metadata": {
+            "comment": "This is a simple host that runs STREAM local preferred. The node uses kvm to ff the simulation w/ systemd.",
+            "experiment": "stream-numa-preferred-4-nodes",
+            "checkpoint": "",
+            "maxinsts": ""
+        },
+        "cpu": {
+            "ff-core": "kvm",
+            "roi-core": "o3",
+            "isa": "x86",
+            "count": "8"
+        },
+        "cache": {
+            "type": "l1l2l3",
+            "l1i-size": "32KiB",
+            "l1d-size": "32KiB",
+            "l2-size": "512KiB",
+            "l3-size": "8MiB",
+            "l3-assoc": "16"
+        },
+        "local-memory": {
+            "type": "ddr4",
+            "size": "64MiB"
+        },
+        "remote-memory": {
+            "size": "",
+            "shared": "false",
+            "latency": "170ns",
+            "start": "0x240000000",
+            "end": "0x280000000"
+        },
+        "workitem": {
+            "cmd": ["echo \"exp: starting STREAM remotely!\"\n",
+                    "numastat;",
+                    "numactl --hardware;",
+                    "/home/gem5/simple-vectorizable-microbenchmarks/stream-tcmalloc/stream.hw.m5 8388608;",
+                    "numastat;",
+                    "m5 exit;"],
+            "disk": "/home/kaustavg/projects/kg-resources-2/src/shared-memcached/x86-disk-image-24-04/x86-ubuntu",
+            "kernel": "/home/kaustavg/kernel/x86/linux-6.9.9/vmlinux",
+            "bootloader": ""
+        }
+    }
+}

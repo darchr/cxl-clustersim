@@ -138,7 +138,7 @@ gem5RequestToSSTRequest(gem5::PacketPtr pkt,
             panic("Unable to translate command %d to Request class!",
                 sst_command_type);
     }
-
+    // std::cout << std::hex << "0x" << pkt->getAddr() << std::dec << std::endl;
     if ((gem5::MemCmd::Command)pkt->cmd.toInt() == gem5::MemCmd::LoadLockedReq
         || (gem5::MemCmd::Command)pkt->cmd.toInt() == gem5::MemCmd::SwapReq
         || pkt->req->isLockedRMW()) {
@@ -161,9 +161,83 @@ gem5RequestToSSTRequest(gem5::PacketPtr pkt,
     return request;
 }
 
+/* Base class providing an explicit, deliberate no-op for every
+ * StandardMem::Request subtype. SST::Interfaces::StandardMem::RequestHandler
+ * (see stdMem.h) calls Output::fatal() by default for any handle()
+ * overload that isn't overridden -- it's meant for exhaustive visitors,
+ * not "I only care about one type". Handlers derived from this only need
+ * to override the type(s) they actually act on; every other type
+ * silently does nothing, matching what `dynamic_cast<T*>(request) ==
+ * nullptr` used to do at each of this codebase's old cast sites. */
+class NoOpRequestHandler : public SST::Interfaces::StandardMem::RequestHandler
+{
+  public:
+    explicit NoOpRequestHandler(SST::Output* output) :
+        SST::Interfaces::StandardMem::RequestHandler(output)
+    {}
+
+    void handle(SST::Interfaces::StandardMem::Read*) override {}
+    void handle(SST::Interfaces::StandardMem::ReadResp*) override {}
+    void handle(SST::Interfaces::StandardMem::Write*) override {}
+    void handle(SST::Interfaces::StandardMem::WriteResp*) override {}
+    void handle(SST::Interfaces::StandardMem::FlushAddr*) override {}
+    void handle(SST::Interfaces::StandardMem::FlushCache*) override {}
+    void handle(SST::Interfaces::StandardMem::FlushResp*) override {}
+    void handle(SST::Interfaces::StandardMem::ReadLock*) override {}
+    void handle(SST::Interfaces::StandardMem::WriteUnlock*) override {}
+    void handle(SST::Interfaces::StandardMem::LoadLink*) override {}
+    void handle(SST::Interfaces::StandardMem::StoreConditional*) override {}
+    void handle(SST::Interfaces::StandardMem::MoveData*) override {}
+    void handle(SST::Interfaces::StandardMem::CustomReq*) override {}
+    void handle(SST::Interfaces::StandardMem::CustomResp*) override {}
+    void handle(SST::Interfaces::StandardMem::InvNotify*) override {}
+};
+
+/* Copies a ReadResp's data onto the gem5 packet being turned into a
+ * response. Every other request type reaching inplaceSSTRequestToGem5-
+ * PacketPtr() is irrelevant here (mirrors the old
+ * `dynamic_cast<ReadResp*>(request) == nullptr` no-op path). */
+class ReadRespDataSetter : public NoOpRequestHandler
+{
+  public:
+    ReadRespDataSetter(gem5::PacketPtr pkt, SST::Output* output) :
+        NoOpRequestHandler(output), pkt(pkt)
+    {}
+
+    void handle(SST::Interfaces::StandardMem::ReadResp* request) override
+    {
+        pkt->setData(request->data.data());
+    }
+
+  private:
+    gem5::PacketPtr pkt;
+};
+
+/* Reports (via the `isWrite` flag) whether a Request is a Write,
+ * without dynamic_cast. Used by SSTResponderSubComponent::
+ * handleTimingReq() to decide whether an untracked (no matching
+ * sstRequestIdToPacketMap entry -- see that function's comment) request
+ * is a posted write and so needs its own, separately-throttled
+ * admission control. */
+class IsWriteDetector : public NoOpRequestHandler
+{
+  public:
+    explicit IsWriteDetector(SST::Output* output) :
+        NoOpRequestHandler(output), isWrite(false)
+    {}
+
+    void handle(SST::Interfaces::StandardMem::Write*) override
+    {
+        isWrite = true;
+    }
+
+    bool isWrite;
+};
+
 inline void
 inplaceSSTRequestToGem5PacketPtr(gem5::PacketPtr pkt,
-                                SST::Interfaces::StandardMem::Request* request)
+                                SST::Interfaces::StandardMem::Request* request,
+                                SST::Output* output)
 {
     pkt->makeResponse();
 
@@ -173,16 +247,10 @@ inplaceSSTRequestToGem5PacketPtr(gem5::PacketPtr pkt,
         pkt->req->setExtraData(1);
     }
     // If there is data in the request, send it back. Only ReadResp requests
-    // have data associated with it. Other packets does not need to be casted.
+    // have data associated with it.
     if (!pkt->isWrite()) {
-        // Need to verify whether the packet is a ReadResp, otherwise the
-        // program will try to incorrectly cast the request object.
-        if (SST::Interfaces::StandardMem::ReadResp* test =
-            dynamic_cast<SST::Interfaces::StandardMem::ReadResp*>(request)) {
-            pkt->setData(dynamic_cast<SST::Interfaces::StandardMem::ReadResp*>(
-                request)->data.data()
-            );
-        }
+        ReadRespDataSetter setter(pkt, output);
+        request->handle(&setter);
     }
 
     // Clear out bus delay notifications

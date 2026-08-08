@@ -74,8 +74,66 @@ class SSTResponderSubComponent: public SST::SubComponent
     std::string gem5SimObjectName;
     std::string memSize;
     uint64_t processed_addr;
+    uint64_t bytes_per_phase;
     int count_limit;
     int phases_needed;
+
+    // Throttling of gem5-side request injection: caps how many requests
+    // this bridge will have outstanding towards SST (sent but not yet
+    // responded to) at once, analogous to a real CXL link/device's
+    // outstanding-transaction credit limit. Requests received while at the
+    // cap are buffered in throttledRequestQueue instead of being handed to
+    // memoryInterface, and released FIFO as responses free up slots.
+    // 0 disables throttling (unbounded, the historical behavior).
+    uint32_t maxInflightRequests;
+    uint32_t inflightRequests;
+    std::queue<SST::Interfaces::StandardMem::Request*> throttledRequestQueue;
+
+    // Called whenever a response is received for a request that occupied an
+    // inflight slot: frees that slot and, if throttling is enabled, drains
+    // as many queued requests as now fit under the cap.
+    void releaseInflightSlot();
+
+    // Separate admission control for *posted* writes (requests that
+    // don't have an sstRequestIdToPacketMap entry -- see
+    // handleTimingReq()'s comment, e.g. gem5 cache writebacks). These
+    // can't share maxInflightRequests/releaseInflightSlot() above: that
+    // mechanism releases a slot when a response matches
+    // sstRequestIdToPacketMap, which posted writes are never in by
+    // definition, so counting them there would just leak slots forever
+    // (this is exactly the bug that used to make the bridge deadlock).
+    // Instead: WriteResp responses to posted writes still exist (SST
+    // still executes them and acks them -- see
+    // Translator::gem5RequestToSSTRequest()'s posted=false), they just
+    // arrive as *unsolicited* responses (no sstRequestIdToPacketMap
+    // match) since gem5 never asked to be told about them. Any
+    // unsolicited WriteResp can only ever correspond to one of our own
+    // posted writes (nothing else in this pipeline generates one), so
+    // UnsolicitedRequestHandler uses that arrival, instead of a
+    // response match, as the release signal here.
+    //
+    // Note this bounds burst size, not overflow: maxPostedWrites is a
+    // *separate* budget from maxInflightRequests, and both draw against
+    // the same downstream DirectoryController MSHR
+    // (network_common.create_node_directory_bridge's mshr_num_entries),
+    // so their sum can still exceed it under sustained combined
+    // read/write load. It substantially reduces how often that happens
+    // relative to posted writes being completely unthrottled, but
+    // doesn't guarantee it can't.
+    uint32_t maxPostedWrites;
+    uint32_t postedWritesOutstanding;
+    std::queue<SST::Interfaces::StandardMem::Request*> postedWriteQueue;
+    void releasePostedWriteSlot();
+
+    // Dispatches on the concrete SST::Interfaces::StandardMem::Request
+    // subtype without dynamic_cast, via the RequestHandler double-dispatch
+    // API stdMem.h already provides (Request::handle(RequestHandler*)).
+    // Forward-declared here (nested classes are full members and so get
+    // access to SSTResponderSubComponent's private members, e.g.
+    // responseReceiver/memoryInterface/blocked()/responseQueue); fully
+    // defined in the .cc, next to their one use site each.
+    class UnsolicitedRequestHandler;
+    class SwapReqResponseHandler;
 
   public:
     SSTResponderSubComponent(SST::ComponentId_t id, SST::Params& params);
@@ -124,7 +182,28 @@ class SSTResponderSubComponent: public SST::SubComponent
 
     SST_ELI_DOCUMENT_PARAMS(
         {"response_receiver_name", \
-         "Name of the SimObject receiving the responses"}
+         "Name of the SimObject receiving the responses"},
+        {"max_inflight_requests", \
+         "Max number of requests this bridge will have outstanding " \
+         "towards SST at once (like a CXL link's outstanding-transaction " \
+         "credit limit). Extra requests are queued client-side until a " \
+         "slot frees up. 0 disables throttling. Default: 64 (matches " \
+         "the DirectoryController bridge's mshr_num_entries default in " \
+         "network_common.create_node_directory_bridge, so the bridge " \
+         "never injects more requests than the downstream MSHR can " \
+         "hold)."},
+        {"max_posted_writes", \
+         "Max number of posted writes (e.g. gem5 cache writebacks -- " \
+         "requests with no matching sstRequestIdToPacketMap entry, see " \
+         "handleTimingReq()) this bridge will have outstanding towards " \
+         "SST at once. Separate budget from max_inflight_requests, " \
+         "since posted writes have no response to key a normal release " \
+         "on. Extra posted writes are queued client-side until a slot " \
+         "frees up. 0 disables throttling. Default: 32. Note this and " \
+         "max_inflight_requests draw against the same downstream MSHR, " \
+         "so their sum can still exceed its capacity under sustained " \
+         "combined load -- this reduces, but doesn't eliminate, " \
+         "burst-driven MSHR overflow from posted writes."}
     )
 
 };

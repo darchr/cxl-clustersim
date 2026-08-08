@@ -46,3 +46,23 @@ class ExternalMemory(AbstractMemory):
     is_shared = Param.Bool(False, "Set this to true when simulation CXL 3.0"
                             "shared memory")
     use_sst_sim = Param.Bool(True, "Use SST as an external memory simulator.")
+
+    enable_backpressure = Param.Bool(False,
+        "Model host-side CXL credit-based flow control: cap the number of "
+        "outstanding (response-pending) requests this port will forward "
+        "to SST at once. Once at the cap, new requests are refused via "
+        "the standard gem5 ResponsePort retry protocol (recvTimingReq() "
+        "returns false; the sender holds the packet and resends once "
+        "this port calls sendRetryReq()) instead of being accepted "
+        "immediately. False (default) preserves the historical behavior "
+        "of accepting every request unconditionally, with no port-level "
+        "backpressure -- in that case max_outstanding_requests is unused."
+    )
+    max_outstanding_requests = Param.Unsigned(64,
+        "Max number of outstanding (response-pending) requests this port "
+        "will have forwarded to SST at once. Only enforced when "
+        "enable_backpressure is True. Requests that don't need a "
+        "response (e.g. posted writebacks) never count against this "
+        "limit, since there's no completion event to release their "
+        "credit on."
+    )

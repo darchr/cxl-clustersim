@@ -49,7 +49,11 @@ ExternalMemory::ExternalMemory(
                           params.physical_address_ranges.end()),
     nodeIndex(params.node_index),
     isShared(params.is_shared),
-    useSSTSim(params.use_sst_sim)
+    useSSTSim(params.use_sst_sim),
+    enableBackpressure(params.enable_backpressure),
+    maxOutstandingRequests(params.max_outstanding_requests),
+    outstandingRequests(0),
+    needRetry(false)
 {
     this->init_phase_bool = false;
     // This needs to be in the class constructor
@@ -137,8 +141,29 @@ ExternalMemory::sendTimingResp(gem5::PacketPtr pkt)
             ++stats.numWriteIncomingPackets;
             assert(false && "Should only see read responses!");
         }
+
+        // A response only ever exists for a request that needed one (see
+        // handleTiming()'s consumesCredit gating and
+        // Translator::gem5RequestToSSTRequest()'s matching
+        // needsResponse() check on the SST side), so every response
+        // reaching here paid for exactly one credit -- release it. This
+        // is a no-op when backpressure was never enabled.
+        if (enableBackpressure)
+            releaseOutstandingCredit();
     }
     return return_status;
+}
+
+void
+ExternalMemory::releaseOutstandingCredit()
+{
+    if (outstandingRequests > 0)
+        --outstandingRequests;
+
+    if (needRetry && outstandingRequests < maxOutstandingRequests) {
+        needRetry = false;
+        outgoingPort.sendRetryReq();
+    }
 }
 
 void
@@ -231,6 +256,27 @@ bool ExternalMemory::handleTiming(PacketPtr pkt)
     //
     // Make sure that this memory is being simulated in SST
     assert (useSSTSim);
+
+    // Host-side CXL credit check (see enable_backpressure param). Only
+    // packets that need a response consume a credit: posted requests
+    // (e.g. cache writebacks) never trigger sendTimingResp(), so there
+    // would be no event to ever release a credit reserved for one --
+    // counting them here would just leak credits until the port wedges
+    // shut permanently. When disabled (the default), this is skipped
+    // entirely and behavior is unchanged from before this feature existed.
+    bool consumesCredit = enableBackpressure && pkt->needsResponse();
+    if (consumesCredit && outstandingRequests >= maxOutstandingRequests) {
+        // Refuse the request. Per the gem5 ResponsePort contract, pkt
+        // stays owned by the caller of recvTimingReq() (the requesting
+        // cache/crossbar), which holds it and resends via sendTimingReq()
+        // once we call outgoingPort.sendRetryReq() -- see
+        // releaseOutstandingCredit(). We must not touch pkt or forward
+        // it to SST here.
+        needRetry = true;
+        return false;
+    }
+    if (consumesCredit)
+        ++outstandingRequests;
 
     // This might be an unnecessary statistic. This was used to veryfy reads
     // and writes in the beginning.
