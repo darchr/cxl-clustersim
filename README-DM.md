@@ -251,20 +251,6 @@ Device-side logic can be added at the gem5 subcomponent, that has access to the 
 In the case where a user wants to add new logic for shared memory across multiple hosts, a new SST component might be needed that accepts SST::StandardMem::Request after the gem5 subcomponent, byt before SST's memHierarchy.
 See https://sst-simulator.org/sst-docs/docs/elements/memHierarchy/stdmem on how to get started.
 
-## Reproducing the results shown in the paper
-
-We document all the instructions required to reproduce the results from the paper.
-
-### Testing and Building Platform
-
-All the experiments were done on an ARM server-class machine with the following parameters.
-```txt
-```
-
-gem5 and SST were build with the following commands:
-
-See section [BUILDING](#building).
-
 ### Known bugs
 
 The platform doesn't have a large number of bugs that we are aware of.
